@@ -3,7 +3,7 @@ from sqlalchemy.orm import sessionmaker
 
 from backend.database import Base
 from backend.models import Product
-from seed_products import seed
+from cli import seed
 
 
 def _factory(tmp_path):

@@ -20,7 +20,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    command: python serve_frontend.py 8000
+    command: python cli.py serve 8000
     ports:
       - "8000:8000"
     environment:
@@ -34,7 +34,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    command: python seed_products.py
+    command: python cli.py seed
     restart: "no"
     environment:
       - DATABASE_URL=sqlite:////app/backend/database.db

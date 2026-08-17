@@ -1,10 +1,10 @@
 from types import SimpleNamespace
 
 import stripe
+from sqlalchemy import select
 
 from backend.database import SessionLocal
 from backend.models import Cart
-from sqlalchemy import select
 
 
 def _add_item(client, variant_id, sid):

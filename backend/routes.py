@@ -8,8 +8,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from . import models
-from .config import FRONTEND_URL
-from .database import SessionLocal
+from .database import FRONTEND_URL, SessionLocal
 
 stripe.api_key = os.environ.get("STRIPE_SECRET_KEY")
 

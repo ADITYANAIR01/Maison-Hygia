@@ -1,10 +1,11 @@
+"""Maison Hygia backend - FastAPI application."""
+
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from .config import ALLOWED_ORIGINS
-from .database import ensure_schema
+from .database import ALLOWED_ORIGINS, ensure_schema
 from .routes import cart_router, payment_router, router
 
 
@@ -32,3 +33,23 @@ app.include_router(payment_router)
 @app.get("/")
 def root():
     return {"message": "Maison Hygia API is running", "version": "0.1.0"}
+
+
+def run_server(port: int = 8001, reload: bool = True):
+    """Run the backend server (for local development)."""
+    import uvicorn
+
+    uvicorn.run(
+        "backend.main:app",
+        host="0.0.0.0",
+        port=port,
+        reload=reload,
+        reload_dirs=["backend"],
+    )
+
+
+if __name__ == "__main__":
+    import sys
+
+    port = int(sys.argv[1]) if len(sys.argv) > 1 else 8001
+    run_server(port=port, reload=True)

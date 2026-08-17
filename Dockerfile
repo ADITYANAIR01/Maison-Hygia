@@ -9,8 +9,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy application code
 COPY backend/ ./backend/
 COPY Website/ ./Website/
-COPY serve_frontend.py ./
-COPY seed_products.py ./
+COPY cli.py ./
 
 # Expose ports
 # - 8000: Frontend (static files)

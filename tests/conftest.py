@@ -18,11 +18,11 @@ os.environ["ALLOWED_ORIGINS"] = "http://localhost:8000,http://localhost:8001"
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-import pytest  # noqa: E402
-from fastapi.testclient import TestClient  # noqa: E402
+import pytest
+from fastapi.testclient import TestClient
 
-from backend.database import SessionLocal  # noqa: E402
-from backend.main import app  # noqa: E402
+from backend.database import SessionLocal
+from backend.main import app
 
 
 @pytest.fixture(scope="session")
@@ -33,7 +33,7 @@ def client():
 
 @pytest.fixture(scope="session", autouse=True)
 def seeded_db(client):
-    from seed_products import seed
+    from cli import seed
 
     seed()
 
