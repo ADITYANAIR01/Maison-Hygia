@@ -11,7 +11,9 @@ This repository contains two distinct halves that share one repo:
 - **Frontend** (`Website/`): A static clone of the Maison Hygia site. It consists of a single `index.html` (with inline Tailwind CSS and a custom search / "add to bag" feature) plus a minified React bundle (`Website/assets/index-DLFkKnAo.js`). **The cloned React bundle does not talk to the FastAPI backend** — it runs on hard-coded catalogs and a live Supabase project. Only the custom search feature added on top of the clone calls the backend API.
 - **Backend** (`backend/`): A FastAPI application (SQLAlchemy + SQLite by default, PostgreSQL supported) exposing product, cart, and Stripe payment endpoints, plus the scripts to run, seed, and containerize it.
 
-The two halves are wired together only by the search feature: `Website/index.html` calls `GET /api/v1/products/`, `GET /api/v1/products/{id}`, and `POST /cart/add` through a development proxy.
+The two halves are wired together by the search feature: `Website/index.html` calls `GET /api/v1/products/`, `GET /api/v1/products/{id}`, and `POST /cart/add` through a development proxy.
+
+> **Product decision (documented):** the compiled React bundle is left as-is. The FastAPI backend is the data source for the custom search / cart / payment feature in `index.html`. A full migration of the bundle (replacing its hard-coded catalog and Supabase integration with the backend) is explicitly **out of scope** — the bundle is minified and wired to a live Supabase project, so rewiring it would require the production data/Stripe story to be defined first.
 
 > See [FEATURES.md](FEATURES.md) for a detailed breakdown of what works, what is partial, and what is broken.
 
@@ -24,7 +26,7 @@ The two halves are wired together only by the search feature: `Website/index.htm
 | Database | SQLite (default), PostgreSQL (via `DATABASE_URL`) |
 | Payments | Stripe (checkout session + webhook) |
 | Deployment | Docker, docker-compose, GitHub Actions CI |
-| Dev tooling | uvicorn, ruff, black, pytest (no tests yet) |
+| Dev tooling | uvicorn, ruff, black, pytest |
 
 ## Repository Structure
 
@@ -37,22 +39,24 @@ Maison-Hygia/
 │       └── *.png, *.jpg, *.css     # Site images and stylesheet
 ├── backend/                        # FastAPI backend
 │   ├── __init__.py
-│   ├── main.py                     # FastAPI app; creates DB tables on startup
-│   ├── config.py                   # Settings (DATABASE_URL, CORS, security) — some dead config
-│   ├── database.py                 # SQLAlchemy engine / session
+│   ├── main.py                     # FastAPI app (lifespan: creates tables + dev migrations, CORS)
+│   ├── config.py                   # Settings (DATABASE_URL, FRONTEND_URL, CORS origins)
+│   ├── database.py                 # SQLAlchemy engine / session / ensure_schema
 │   ├── models.py                   # ORM: Product, Variant, Inventory, Cart, CartItem, Tag
 │   └── routes.py                   # Endpoints: products, cart, payment (Stripe)
-├── run_backend.py                  # uvicorn launcher for the backend (default port 8000; convention 8001)
-├── serve_frontend.py               # Static file server + proxy of /api, /cart, /payment to the backend
-├── seed_products.py                # Seeds 16 products (MH-002..MH-017) — run after backend starts once
+├── run_backend.py                  # uvicorn launcher for the backend (default port 8001)
+├── serve_frontend.py               # Static file server + proxy of /api, /cart, /payment + SPA fallback
+├── seed_products.py                # Seeds 16 products (MH-002..MH-017); upserts by slug; works on a fresh DB
+├── tests/                          # pytest suite (TestClient + mocked Stripe)
 ├── requirements.txt                # Pinned dependencies (incl. dev: pytest, ruff, black)
-├── pyproject.toml                  # Project metadata + ruff/black config
-├── Dockerfile                      # Python 3.14-slim image (runs backend on 8001 + frontend on 8000)
-├── docker-compose.yml              # backend + frontend services (see Known limitations)
-├── .github/workflows/ci.yml        # CI: test, lint, security
-├── .gitignore                      # Python, *.db, .env, .DS_Store, .vscode/, logs
+├── pyproject.toml                  # Project metadata (PEP 621) + ruff/black config
+├── Dockerfile                      # Python 3.14-slim image; installs pinned requirements; EXPOSE 8000 8001
+├── docker-compose.yml              # backend + frontend + seed services (see Running with Docker)
+├── .github/workflows/ci.yml        # CI: test, lint, security (safety now gates)
+├── .env.example                    # Documented environment variables (copy to .env)
+├── .gitignore                      # Python, *.db, .env, .ruff_cache/, .DS_Store, logs
 ├── Maison_Hygia_Fellowship_Case_Study_Challenge_Branded.md  # Fellowship case-study brief
-└── IMPROVEMENT_PLAN.md             # Prioritized list of known bugs/fixes (P0–P3)
+└── IMPROVEMENT_PLAN.md             # Prioritized list of known bugs/fixes (P0–P3), all addressed
 ```
 
 ## Prerequisites
@@ -72,13 +76,13 @@ pip install -r requirements.txt
 
 ### 2. Start the backend first
 
-The database file and tables are created automatically on backend startup.
+The database file and tables are created automatically on backend startup (including lightweight dev migrations for existing SQLite databases).
 
 ```bash
 python run_backend.py 8001
 ```
 
-The backend runs at `http://0.0.0.0:8001`.
+The backend runs at `http://0.0.0.0:8001` (default port is 8001).
 
 ### 3. Start the frontend + proxy
 
@@ -86,33 +90,36 @@ The backend runs at `http://0.0.0.0:8001`.
 python serve_frontend.py 8000
 ```
 
-This serves the `Website/` directory and proxies requests under `/api/`, `/cart`, and `/payment` to `BACKEND_URL` (default `http://127.0.0.1:8001`).
+This serves the `Website/` directory and proxies requests under `/api/`, `/cart`, and `/payment` to `BACKEND_URL` (default `http://127.0.0.1:8001`). Extensionless paths that don't exist on disk (e.g. `/shop`) fall back to `index.html`, so SPA deep links work on refresh/direct open.
 
 ### 4. Open the site
 
 Open [http://localhost:8000](http://localhost:8000) in your browser.
 
-> The port split matters: backend on **8001**, frontend on **8000**. Both scripts default to 8000, which collides — always pass the ports explicitly as shown above.
+> The port split matters: backend on **8001**, frontend on **8000**.
 
 ### 5. Seed the product catalog (optional)
 
-The database starts empty. To populate it with the 16 seeded products (MH-002 through MH-017), run the seeder **after** the backend has started at least once (the backend creates the tables on startup; the seeder does not).
+The database starts empty. The seeder creates its own tables, so it works on a fresh database even before the backend has run:
 
 ```bash
 python seed_products.py
 ```
 
+The seeder inserts the 16 products (MH-002 through MH-017) and **upserts by slug** on re-runs — existing rows are updated (name, description, price, inventory) instead of skipped, so stale prices never linger.
+
 ## Configuration
 
-All configuration is read from environment variables. Defaults are safe for local development only.
+All configuration is read from environment variables. Copy [`.env.example`](.env.example) to `.env` and fill in real values; safe defaults are used otherwise.
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
 | `DATABASE_URL` | `sqlite:///<backend>/database.db` | SQLAlchemy database URL. Use a PostgreSQL URL in production. |
 | `BACKEND_URL` | `http://127.0.0.1:8001` | Base URL that `serve_frontend.py` proxies `/api`, `/cart`, `/payment` to. |
-| `STRIPE_SECRET_KEY` | `sk_test_placeholder` | Stripe API secret key. Placeholder — set a real key via env. |
-| `STRIPE_WEBHOOK_SECRET` | `whsec_placeholder` | Stripe webhook signing secret. Placeholder — set a real secret via env. |
-| `ALLOWED_ORIGINS` | `http://localhost:3000` | Comma-separated CORS origins. Currently unused — no `CORSMiddleware` is registered. |
+| `FRONTEND_URL` | `http://localhost:8000` | Base URL used by the backend to build Stripe checkout redirects (`/cart/success`, `/cart/cancel`). |
+| `STRIPE_SECRET_KEY` | *(unset)* | Stripe API secret key. No placeholder is committed. If unset, `POST /payment/create-checkout-session` fails fast with HTTP 503. |
+| `STRIPE_WEBHOOK_SECRET` | *(unset)* | Stripe webhook signing secret. No placeholder is committed. If unset, `POST /payment/webhook` fails fast with HTTP 503. |
+| `ALLOWED_ORIGINS` | `http://localhost:8000,http://localhost:8001` | Comma-separated CORS origins allowed by the backend's `CORSMiddleware`. |
 
 ## API Reference
 
@@ -121,17 +128,17 @@ Base path for products: `/api/v1/products`. Cart and payment endpoints are prefi
 | Method | Path | Params | Purpose |
 |--------|------|--------|---------|
 | `GET` | `/` | — | Health check: `{"message": "Maison Hygia API is running", ...}` |
-| `GET` | `/api/v1/products/` | `skip` (int, default 0), `limit` (int, default 50), `search` (str, optional) | List active products with pagination; `search` filters name/description (case-insensitive). |
+| `GET` | `/api/v1/products/` | `skip` (int, default 0), `limit` (int, default 50), `search` (str, optional) | List active products with pagination; `search` filters name/description (case-insensitive). `total` is the true match count before pagination. |
 | `GET` | `/api/v1/products/{product_id}` | `product_id` (int, path) | Retrieve a single active product with its variants and inventory. 404 if missing or inactive. |
-| `GET` | `/cart/` | `session_id` (str, query, optional) | View cart items for a session. Without `session_id` it can return HTTP 500 once more than one cart exists (see Known limitations). |
-| `POST` | `/cart/add` | JSON body: `variant_id` (int), `quantity` (int, default 1), `session_id` (str) | Add a variant to the cart. Creates a new cart (and session_id) if none matches; validates variant and inventory. |
+| `GET` | `/cart/` | `session_id` (str, query, optional) | View cart items for a session. Returns the empty payload `{"items": [], "total": 0, "total_quantity": 0}` when no/unknown `session_id` is given. |
+| `POST` | `/cart/add` | JSON body: `variant_id` (int), `quantity` (int, default 1), `session_id` (str) | Add a variant to the cart. Reuses the client-supplied `session_id` for new carts (no new UUID minting), so repeated adds persist to one cart. Validates variant and inventory. |
 | `POST` | `/cart/remove` | JSON body: `variant_id` (int), `session_id` (str) | Remove a variant from the cart. |
-| `POST` | `/payment/create-checkout-session` | JSON body: `session_id` (str) | Create a Stripe Checkout session for the cart's line items. Returns `checkout_url`. |
-| `POST` | `/payment/webhook` | Stripe-signed payload in body, `stripe-signature` header | Handle Stripe webhook events (`checkout.session.completed`). Currently cannot mark carts paid (see Known limitations). |
+| `POST` | `/payment/create-checkout-session` | JSON body: `session_id` (str) | Create a Stripe Checkout session for the cart's line items. Passes `metadata={"session_id": ...}` and `FRONTEND_URL`-based success/cancel URLs. Returns `checkout_url`. 503 if `STRIPE_SECRET_KEY` is unset. |
+| `POST` | `/payment/webhook` | Stripe-signed payload in body, `stripe-signature` header | Handle Stripe webhook events (`checkout.session.completed`); marks the matching cart `payment_status="paid"` / `status="paid"`. 503 if `STRIPE_WEBHOOK_SECRET` is unset. |
 
 ## Running with Docker
 
-Build and start both services:
+Build and start the backend, frontend, and one-shot seed service:
 
 ```bash
 docker-compose up --build
@@ -140,47 +147,46 @@ docker-compose up --build
 - Frontend: [http://localhost:8000](http://localhost:8000)
 - Backend: [http://localhost:8001](http://localhost:8001)
 
-> **Compose limitations (honest note):** Both `backend` and `frontend` services are built from the same `Dockerfile`, whose `CMD` runs **both** the uvicorn backend (8001) and the frontend server (8000) in every container — so each container runs a redundant copy of the other service. The image also does not seed the database automatically, and the `backend` service bind-mounts `./backend` (which can mask the fresh-image DB with a host one). See `IMPROVEMENT_PLAN.md` (P2 items) for the planned fixes.
+Each service runs only its own process:
+
+- `backend` → `uvicorn backend.main:app --host 0.0.0.0 --port 8001`
+- `frontend` → `python serve_frontend.py 8000` (with `BACKEND_URL=http://backend:8001`)
+- `seed` → `python seed_products.py` (one-shot, `restart: "no"`, runs after the backend has created tables)
+
+Stripe secrets are passed through env substitution (`${STRIPE_SECRET_KEY:-}`, `${STRIPE_WEBHOOK_SECRET:-}`) — export them in your shell or `.env` before `docker-compose up`; there are no placeholder secrets in the repo.
 
 ## Testing & Linting
 
 ```bash
+# Tests
+python -m pytest
+
 # Lint
 ruff check backend/
 
 # Format check
 black --check backend/
-
-# Tests (none exist yet)
-python -m pytest
 ```
 
-There are **no automated tests yet**. The CI test job detects the absence of a `tests/` directory or `test_*.py` files and skips pytest with a message.
+The `tests/` suite uses `fastapi.testclient.TestClient` with a throwaway SQLite database (set via `DATABASE_URL` in `tests/conftest.py` before importing the backend) and monkeypatched Stripe calls — it never touches the dev database. Coverage includes product listing/search/pagination, cart persistence (same-session adds create one cart), cart removal, checkout-session metadata/redirect URLs, the webhook paid flow, and seed reconciliation (fresh DB + re-run upsert).
 
 ## CI/CD
 
 The GitHub Actions workflow (`.github/workflows/ci.yml`) runs on push/PR to `main`/`master` and has three jobs:
 
-1. **test** — installs dependencies; runs `pytest` only if tests exist (currently skipped).
+1. **test** — installs dependencies; runs `pytest` (a real `tests/` directory exists, so it always runs).
 2. **lint** — runs `ruff check backend/` and `black --check backend/`.
-3. **security** — installs `safety` and runs `safety check --full-report`; non-blocking (`|| true`), and currently only scans the tools themselves because project dependencies are not installed in that job.
+3. **security** — installs `requirements.txt` and `safety`, then runs `safety check -r requirements.txt --full-report` (no `|| true` — it gates the build).
 
 ## Known Limitations
 
-Documented accurately from the current codebase (do not assume these are fixed):
+Documented accurately from the current codebase:
 
-- **The cloned React bundle never calls the FastAPI backend.** It uses hard-coded catalogs and a live Supabase project (publishable key embedded in the bundle). Only the custom search feature in `index.html` talks to the backend.
-- **Two product catalogs exist with conflicting prices** — the bundle's hard-coded catalog (e.g. Face Serum $62) vs. the seeded DB (Face Serum $52.00). Search results can show names/prices that differ from the shop pages.
-- **Cart sessions don't persist across adds.** `POST /cart/add` mints a new UUID when the client-supplied `session_id` isn't reused, and the frontend ignores the returned `session_id`.
-- **`GET /cart/` without `session_id` can return HTTP 500** once more than one cart exists (it selects all carts then expects one).
-- **Stripe webhook cannot mark carts paid.** The checkout session is created without `metadata={"session_id": ...}`, and the `Cart` model has no `payment_status`/`status` columns — the webhook's assignment is silently discarded.
-- **Stripe redirect URLs point at `http://localhost:8023`**, a port nothing serves; no success/cancel routes are registered there.
-- **`seed_products.py` fails on a fresh database** unless the backend has been started once (tables are created by the backend startup event).
-- **SPA deep links (e.g. `/shop`) return 404** under `serve_frontend.py` — there is no `index.html` fallback.
-- **Port defaults collide** — both `run_backend.py` and `serve_frontend.py` default to 8000; the working convention is backend on 8001, frontend on 8000.
-- **Stripe keys are placeholders** (`sk_test_placeholder`, `whsec_placeholder`) and must be provided via environment variables.
-- **No automated tests exist yet.**
-- **docker-compose** builds the same image for both services, runs both processes in each container (redundant), and does not seed the database automatically.
+- **The cloned React bundle never calls the FastAPI backend.** It uses hard-coded catalogs and a live Supabase project (publishable key embedded in the bundle). Only the custom search feature in `index.html` talks to the backend. This is a **documented product decision** (see Overview); full bundle migration is out of scope.
+- **Search-feature product names differ from the shop pages.** The seeder's names are prefixed "Ayurvedic ..." while the bundle shows e.g. "Face Serum". Prices now match the bundle, but the names and images used by the custom search feature are the backend's data, not the bundle's.
+- **Stripe requires real keys.** Checkout/webhook return HTTP 503 until `STRIPE_SECRET_KEY` / `STRIPE_WEBHOOK_SECRET` are set (no placeholders).
+- **The docker-compose `backend` service bind-mounts `./backend`** — the SQLite file used in containers lives on the host at `./backend/database.db`. This is intentional for local dev and is gitignored.
+- **No production database migration tool.** Dev SQLite databases get lightweight idempotent column migrations at startup; production should use a real migration framework (e.g. Alembic) before shipping.
 
 ## Contributing / Roadmap
 

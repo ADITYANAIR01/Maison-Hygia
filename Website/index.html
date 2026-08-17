@@ -564,6 +564,10 @@
             }),
           });
           if (!res.ok) throw new Error('Add to bag failed');
+          const data = await res.json();
+          if (data && data.session_id) {
+            localStorage.setItem('mh_bag_session', data.session_id);
+          }
           btn.textContent = 'Added to bag ✓';
         } catch (error) {
           console.error('Add to bag error:', error);

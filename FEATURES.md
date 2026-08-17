@@ -26,7 +26,7 @@ The one feature that talks to this repo's backend (through the dev proxy):
 
 - **Live search suggestions** — queries `GET /api/v1/products/?search=...` against the FastAPI API and renders results (search panel CSS at ~lines 23–452, markup ~457–496, logic ~498–926)
 - **Product detail view** — fetches `GET /api/v1/products/{id}` for a selected product
-- **Add to bag** — posts to `POST /cart/add` (note: cart sessions do not persist across adds; see status table)
+- **Add to bag** — posts to `POST /cart/add`. The backend reuses the client-supplied `session_id` (no new UUID minted), and the frontend writes the server-returned id to `localStorage` (`mh_bag_session`), so repeated adds persist to one cart.
 
 ### Backend API (`backend/`)
 
@@ -40,9 +40,9 @@ ORM models in `backend/models.py`: `Product`, `Variant`, `Inventory`, `Cart`, `C
 
 ### Deployment
 
-- **Dockerfile** — Python 3.14-slim image; installs dependencies, copies `backend/`, `Website/`, and `serve_frontend.py`; exposes ports 8000 (frontend) and 8001 (backend); `CMD` runs uvicorn on 8001 plus `serve_frontend.py` on 8000
-- **docker-compose.yml** — `backend` and `frontend` services, both built from the same Dockerfile (see Known limitations / P2 plan)
-- **CI pipeline** (`.github/workflows/ci.yml`) — three jobs: test (conditional on tests existing), lint (`ruff check` + `black --check` on `backend/`), security (`safety`, non-blocking)
+- **Dockerfile** — Python 3.14-slim image; installs pinned `requirements.txt`; copies `backend/`, `Website/`, `serve_frontend.py`, and `seed_products.py`; exposes ports 8000 (frontend) and 8001 (backend); default `CMD` runs uvicorn on 8001 (docker-compose overrides per service)
+- **docker-compose.yml** — `backend`, `frontend`, and one-shot `seed` services, each running one process (see Feature Status)
+- **CI pipeline** (`.github/workflows/ci.yml`) — three jobs: test (runs the real pytest suite), lint (`ruff check` + `black --check` on `backend/`), security (`safety check -r requirements.txt`, gating)
 
 ---
 
@@ -50,51 +50,51 @@ ORM models in `backend/models.py`: `Product`, `Variant`, `Inventory`, `Cart`, `C
 
 | Feature | Status | Notes |
 |---------|--------|-------|
-| Site clone (marketing pages, shop, collections, story, contact, careers, account, admin) | Working | From the cloned React bundle; hard-coded content + Supabase |
+| Site clone (marketing pages, shop, collections, story, contact, careers, account, admin) | Working | From the cloned React bundle; hard-coded content + Supabase. Unchanged by this work (documented decision). |
 | Mobile-responsive layout & fonts | Working | From the cloned site |
 | Live search suggestions | Working | Custom feature; calls `GET /api/v1/products/?search=` |
 | Product detail view (search feature) | Working | Calls `GET /api/v1/products/{id}` |
-| Add to bag (search feature) | Partial | Requests reach `POST /cart/add`, but cart sessions never persist across adds — the frontend ignores the server-returned `session_id` and the backend mints a new cart each time |
-| Cart view (`GET /cart/`) | Buggy | Without `session_id` it can return HTTP 500 once more than one cart exists |
-| Product list/search/detail API | Working | `routes.py:28-101`; `total` is reported as page size, not true match count |
-| Stripe checkout session creation | Partial | Endpoint works, but keys are placeholders and redirect URLs point at `localhost:8023` (nothing serves it) |
-| Stripe webhook | Not functional | Checkout session lacks `metadata.session_id`; `Cart` model has no `payment_status`/`status` columns, so carts can never be marked paid |
-| Catalog seeding (`seed_products.py`) | Works after backend start | Fails on a fresh DB because tables are created by the backend startup event, not by the seeder |
-| SPA deep links (`/shop`, etc.) | Broken | 404 under `serve_frontend.py` — no `index.html` fallback |
-| Docker / docker-compose | Partial | Both services run both processes (redundant); no automated DB seeding in the image |
-| CI pipeline (lint / test / security) | Working (with gaps) | Lint runs; test job skips when no tests exist; security job is a no-op (`safety` installed but project deps never installed; `\|\| true` never gates) |
+| Add to bag (search feature) | Working | Sessions persist: backend adopts the client-supplied `session_id` for new carts, and the frontend stores the server-returned id to `localStorage` (`mh_bag_session`), so repeated adds reuse one cart |
+| Cart view (`GET /cart/`) | Working | Returns the empty payload `{"items": [], "total": 0, "total_quantity": 0}` without a `session_id` — no HTTP 500 |
+| Product list/search/detail API | Working | `routes.py:28-101`; `total` is the true match count before pagination now |
+| Stripe checkout session creation | Working | Reads `STRIPE_SECRET_KEY` from env only (503 if unset); passes `metadata={"session_id": ...}`; redirect URLs built from `FRONTEND_URL` to `/cart/success?session_id={CHECKOUT_SESSION_ID}` and `/cart/cancel`. Requires a real `STRIPE_SECRET_KEY` to operate end-to-end |
+| Stripe webhook | Working | `metadata.session_id` is passed on the checkout session; `Cart.payment_status`/`status` columns added via idempotent dev migration (`ensure_schema`); marks the matching cart paid. Requires `STRIPE_WEBHOOK_SECRET` |
+| Catalog seeding (`seed_products.py`) | Working | Runs `create_all` itself (works on a fresh DB before the backend has started); upserts by slug on re-runs |
+| SPA deep links (`/shop`, etc.) | Working | `index.html` fallback in `serve_frontend.py` for extensionless paths that don't exist on disk |
+| Docker / docker-compose | Working | One process per container (`backend` on 8001, `frontend` on 8000, one-shot `seed`), pinned requirements in the image |
+| CI pipeline (lint / test / security) | Working | Real `tests/` suite runs in the test job; security job installs `requirements.txt` and gates with `safety check -r requirements.txt --full-report` |
+
+Note: the cloned React bundle still uses its own localStorage cart and Supabase checkout flow — that is unchanged, per the documented product decision.
 
 ---
 
-## Planned Improvements
+## Recently Fixed
 
-Summarized from [IMPROVEMENT_PLAN.md](IMPROVEMENT_PLAN.md) (the authoritative list, with file/line references). Grouped by priority:
+All items from [IMPROVEMENT_PLAN.md](IMPROVEMENT_PLAN.md) (#1-#18) are addressed. Grouped by priority:
 
-### P0 — Functional bugs (fix first)
-- Add-to-bag sessions never persist (frontend must store the server-returned `session_id`, or the backend should adopt the client-supplied id for new carts)
-- `GET /cart/` without `session_id` returns HTTP 500 (fix the multiple-results query)
-- Stripe webhook can never mark a cart paid (missing `metadata` on the checkout session **and** missing `status`/`payment_status` columns on `Cart`)
-- Stripe redirect URLs point at dead port `localhost:8023` and unregistered routes
+### P0 — Functional bugs (fixed)
+- Add-to-bag sessions now persist: backend reuses the client-supplied `session_id`; frontend stores the returned id (`routes.py`, `index.html`)
+- `GET /cart/` without `session_id` returns the empty payload instead of HTTP 500 (`routes.py`)
+- Stripe webhook can mark carts paid: `metadata.session_id` passed on the checkout session; `Cart.payment_status`/`status` columns added (`routes.py`, `models.py`)
+- Stripe redirect URLs built from `FRONTEND_URL` to `/cart/success|cancel` instead of dead `localhost:8023` (`routes.py`)
 
-### P1 — Contract / architecture mismatches
-- Cloned React bundle never uses the backend (decision needed: integrate the backend into the bundle, or accept the backend is only for the search feature)
-- Two product catalogs with conflicting prices (bundle vs. seeded DB)
-- `seed_products.py` fails on a fresh DB (run backend once first, or add `create_all` to the seeder)
-- SPA deep links 404 and port defaults collide (backend 8001 / frontend 8000 convention)
-- "Face Serum" search shows a broken image (seeder slug `MH_Face_Serum` vs. on-disk `MH_Face_Serem-2.png` typo)
+### P1 — Contract / architecture (fixed)
+- Seed catalog prices reconciled to the bundle (`62.00`/`32.00`/`36.00`/`28.00` in `seed_products.py`)
+- `seed_products.py` runs `create_all` itself and upserts by slug, so it works on a fresh DB and fixes stale rows
+- SPA deep links fall back to `index.html` in `serve_frontend.py`; `run_backend.py` defaults to port 8001
+- "Face Serum" image fixed via `git mv` of `MH_Face_Serem-2.png` -> `MH_Face_Serum-2.png`
 
-### P2 — Build / packaging
-- `pyproject.toml` cannot build (dependencies must be an array of strings per PEP 621)
-- Dockerfile ignores pinned `requirements.txt` and installs unpinned versions
-- docker-compose builds the same image twice, runs both processes in each container, and never seeds the DB
-- Placeholder Stripe secrets (`sk_test_placeholder`, `whsec_placeholder`) in code and compose
+### P2 — Build / packaging (fixed)
+- `pyproject.toml` builds (dependencies as PEP 621 array, `type = "application"` removed, package discovery scoped to `backend*`)
+- Dockerfile installs pinned `requirements.txt` and copies `seed_products.py`
+- docker-compose runs one process per service plus a one-shot `seed` service; secrets via `${STRIPE_SECRET_KEY:-}` substitution
+- Placeholder Stripe secrets removed; missing keys fail fast with HTTP 503 (`.env.example` documents the vars)
 
-### P3 — Dead code / CI nits
-- Dead config in `backend/config.py` (`API_V1_STR`, `ALLOWED_ORIGINS` with no CORS middleware, security settings, unused `get_db()`)
-- `.gitignore` whitelists `.env.example` but no such file exists
-- CI `security` job is a no-op; test job would fail if an empty `tests/` dir is added
-- `.ruff_cache/` not covered by repo `.gitignore`
-- Minor: deprecated `@app.on_event("startup")`; `list_products` reports `total` as page size
+### P3 — Dead code / CI nits (fixed)
+- Dead config removed from `backend/config.py`; `ALLOWED_ORIGINS` wired into real CORS middleware in `main.py`
+- Real `.env.example` added (`.gitignore` whitelist honored)
+- CI security job installs deps and gates with `safety check -r requirements.txt --full-report`; test job runs the real suite
+- `.ruff_cache/` (and `.pytest_cache/`) gitignored; `@app.on_event("startup")` replaced with lifespan; `total` is the true match count
 
 ---
 
@@ -102,13 +102,10 @@ Summarized from [IMPROVEMENT_PLAN.md](IMPROVEMENT_PLAN.md) (the authoritative li
 
 The items below are **aspirational suggestions only**. They are not in the codebase and are listed as candidate directions, not commitments.
 
-- **Connect the cloned React bundle to the FastAPI backend** — replace hard-coded catalogs and the Supabase checkout flow with the repo's own API and Stripe integration so the frontend and backend share one data layer.
-- **Single source of truth for the catalog and prices** — eliminate the two conflicting catalogs (bundle hard-coded vs. seeded DB) so search results and shop pages always agree.
-- **Order fulfillment** — persist orders server-side, mark carts paid end-to-end, update inventory on checkout, and reconcile via the Stripe webhook.
+- **Connect the cloned React bundle to the FastAPI backend** — replace hard-coded catalogs and the Supabase checkout flow with the repo's own API and Stripe integration so the frontend and backend share one data layer. **Still open / out of scope** by the documented product decision: the bundle is minified and wired to a live Supabase project, and full migration would require the production data/Stripe story to be defined first.
+- **Order fulfillment** — persist orders server-side, update inventory on checkout, and reconcile via the Stripe webhook (the webhook currently only marks the cart paid).
 - **Admin dashboard for orders** — manage products, inventory, and orders from the API instead of the current static admin shell.
 - **Newsletter signup** — replace/back the Supabase `newsletter_subscribers` flow with a first-party backend endpoint.
-- **Deep-link support** — add an `index.html` fallback in `serve_frontend.py` so `/shop`, `/account`, `/admin`, etc. survive refresh and direct navigation.
 - **Rate limiting & auth hardening** — protect public endpoints (cart, checkout) from abuse.
-- **Real Stripe keys in production** — move off the `sk_test_placeholder` / `whsec_placeholder` defaults via environment variables.
-- **Automated tests** — add pytest coverage for products, cart, and payment routes; make the CI test job meaningful.
-- **Fix the docker-compose layout** — one process per container (backend on 8001, frontend on 8000), plus a seeding step in the image.
+
+Completed roadmap ideas (deep-link support, env-only Stripe keys, automated tests, one-process-per-container compose with seeding, price reconciliation) are captured under [Recently Fixed](#recently-fixed).

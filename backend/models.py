@@ -126,6 +126,8 @@ class Cart(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     session_id = Column(String, unique=True, index=True, nullable=False)
+    payment_status = Column(String, nullable=False, default="unpaid")
+    status = Column(String, nullable=False, default="open")
     expires_at = Column(DateTime, nullable=False)
     created_at = Column(
         DateTime, default=lambda: datetime.now(timezone.utc), nullable=False

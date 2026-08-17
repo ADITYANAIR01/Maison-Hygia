@@ -57,8 +57,15 @@ class FrontendHandler(SimpleHTTPRequestHandler):
     def do_GET(self):
         if self.path.startswith(PROXY_PREFIXES):
             self._proxy()
-        else:
-            super().do_GET()
+            return
+        clean_path = self.path.split("?", 1)[0].split("#", 1)[0]
+        if (
+            not os.path.isfile(self.translate_path(self.path))
+            and not os.path.splitext(clean_path)[1]
+        ):
+            # SPA fallback: extensionless deep links serve index.html
+            self.path = "/index.html"
+        super().do_GET()
 
     def do_POST(self):
         if self.path.startswith(PROXY_PREFIXES):

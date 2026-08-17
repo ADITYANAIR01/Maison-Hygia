@@ -6,8 +6,9 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from sqlalchemy import select
+from sqlalchemy.orm import Session
 
-from backend.database import SessionLocal
+from backend.database import Base, SessionLocal, engine
 from backend.models import Product, Variant, Inventory
 
 
@@ -25,7 +26,7 @@ PRODUCTS = [
         "name": "Ayurvedic Body Lotion",
         "slug": "MH_Body_Lotion",
         "description": "Rich, fast-absorbing daily lotion with shea butter and cold-pressed almond oil to deeply nourish and restore the skin barrier.",
-        "price": "32.00",
+        "price": "36.00",
         "inventory": 35,
     },
     {
@@ -49,7 +50,7 @@ PRODUCTS = [
         "name": "Ayurvedic Body Wash",
         "slug": "MH_Body_Wash",
         "description": "Creamy cleansing wash with aloe vera and neem that purifies without stripping the skin's natural oils.",
-        "price": "22.00",
+        "price": "32.00",
         "inventory": 50,
     },
     {
@@ -81,7 +82,7 @@ PRODUCTS = [
         "name": "Ayurvedic Face Serum",
         "slug": "MH_Face_Serum",
         "description": "Concentrated botanical serum with vitamin C and niacinamide to brighten and firm the skin.",
-        "price": "52.00",
+        "price": "62.00",
         "inventory": 30,
     },
     {
@@ -143,15 +144,26 @@ PRODUCTS = [
 ]
 
 
-def seed():
-    db = SessionLocal()
+def seed(db: Session | None = None):
+    Base.metadata.create_all(bind=engine)
+    own_session = db is None
+    if own_session:
+        db = SessionLocal()
     try:
         for p in PRODUCTS:
             existing = db.execute(
                 select(Product).where(Product.slug == p["slug"])
             ).scalar_one_or_none()
             if existing:
-                print(f"skip {p['slug']} (exists)")
+                existing.sku = p["sku"]
+                existing.name = p["name"]
+                existing.description = p["description"]
+                variant = existing.variants[0] if existing.variants else None
+                if variant:
+                    variant.price = p["price"]
+                if variant and variant.inventory:
+                    variant.inventory.quantity = p["inventory"]
+                print(f"updated {p['slug']}")
                 continue
 
             product = Product(
@@ -176,7 +188,8 @@ def seed():
         db.commit()
         print("done")
     finally:
-        db.close()
+        if own_session:
+            db.close()
 
 
 if __name__ == "__main__":

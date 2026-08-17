@@ -1,11 +1,11 @@
 """Run the Maison Hygia backend server."""
 
-import uvicorn
 import sys
-from pathlib import Path
+
+import uvicorn
 
 if __name__ == "__main__":
-    port = int(sys.argv[1]) if len(sys.argv) > 1 else 8000
+    port = int(sys.argv[1]) if len(sys.argv) > 1 else 8001
     uvicorn.run(
         "backend.main:app",
         host="0.0.0.0",

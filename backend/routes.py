@@ -4,13 +4,14 @@ from datetime import datetime, timedelta, timezone
 import stripe
 from fastapi import APIRouter, Body, Depends, HTTPException, Request
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from . import models
+from .config import FRONTEND_URL
 from .database import SessionLocal
 
-stripe.api_key = os.getenv("STRIPE_SECRET_KEY", "sk_test_placeholder")
+stripe.api_key = os.environ.get("STRIPE_SECRET_KEY")
 
 
 def get_db():
@@ -41,9 +42,9 @@ def list_products(
             | models.Product.description.ilike(f"%{search}%")
         )
 
-    query = query.offset(skip).limit(limit)
+    total = db.execute(select(func.count()).select_from(query.subquery())).scalar_one()
 
-    products = db.execute(query).scalars().unique().all()
+    products = db.execute(query.offset(skip).limit(limit)).scalars().unique().all()
 
     result = []
     for p in products:
@@ -62,7 +63,7 @@ def list_products(
             }
         )
 
-    return {"total": len(result), "items": result, "skip": skip, "limit": limit}
+    return {"total": total, "items": result, "skip": skip, "limit": limit}
 
 
 @router.get("/{product_id}", summary="Retrieve a product")
@@ -112,10 +113,12 @@ class CreateCheckoutSessionBody(BaseModel):
 @cart_router.get("/", summary="View cart")
 def view_cart(session_id: str | None = None, db: Session = Depends(get_db)):
     """View cart items for a session."""
-    query = select(models.Cart)
-    if session_id:
-        query = query.where(models.Cart.session_id == session_id)
-    cart = db.execute(query).scalar_one_or_none()
+    if not session_id:
+        return {"items": [], "total": 0, "total_quantity": 0}
+
+    cart = db.execute(
+        select(models.Cart).where(models.Cart.session_id == session_id)
+    ).scalar_one_or_none()
 
     if not cart:
         return {"items": [], "total": 0, "total_quantity": 0}
@@ -147,7 +150,7 @@ def add_to_cart(
     db: Session = Depends(get_db),
 ):
     """Add a product variant to the cart."""
-    # Get or create cart
+    # Get or create cart, reusing the client-supplied session id for new carts
     if session_id:
         cart = db.execute(
             select(models.Cart).where(models.Cart.session_id == session_id)
@@ -156,9 +159,10 @@ def add_to_cart(
         cart = None
 
     if not cart:
-        import uuid
+        if not session_id:
+            import uuid
 
-        session_id = str(uuid.uuid4())
+            session_id = str(uuid.uuid4())
         cart = models.Cart(
             session_id=session_id,
             expires_at=datetime.now(timezone.utc) + timedelta(hours=24),
@@ -293,12 +297,16 @@ def create_checkout_session(
             }
         )
 
+    if not stripe.api_key:
+        raise HTTPException(status_code=503, detail="Stripe API key not configured")
+
     checkout_session = stripe.checkout.Session.create(
         payment_method_types=["card"],
         line_items=line_items,
         mode="payment",
-        success_url="http://localhost:8023/cart/success?session_id={CHECKOUT_SESSION_ID}",
-        cancel_url="http://localhost:8023/cart/cancel",
+        metadata={"session_id": session_id},
+        success_url=(f"{FRONTEND_URL}/cart/success?session_id={{CHECKOUT_SESSION_ID}}"),
+        cancel_url=f"{FRONTEND_URL}/cart/cancel",
     )
 
     return {"checkout_url": checkout_session.url}
@@ -311,10 +319,14 @@ async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
     sig_header = request.headers.get("stripe-signature")
     event = None
 
-    try:
-        event = stripe.Webhook.construct_event(
-            payload, sig_header, os.getenv("STRIPE_WEBHOOK_SECRET", "whsec_placeholder")
+    webhook_secret = os.environ.get("STRIPE_WEBHOOK_SECRET")
+    if not webhook_secret:
+        raise HTTPException(
+            status_code=503, detail="Stripe webhook secret not configured"
         )
+
+    try:
+        event = stripe.Webhook.construct_event(payload, sig_header, webhook_secret)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=f"Invalid payload: {e!s}")
     except stripe.error.SignatureVerificationError as e:

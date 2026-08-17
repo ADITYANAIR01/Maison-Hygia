@@ -5,12 +5,14 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+    command: uvicorn backend.main:app --host 0.0.0.0 --port 8001
     ports:
       - "8001:8001"
     environment:
       - DATABASE_URL=sqlite:////app/backend/database.db
-      - STRIPE_SECRET_KEY=sk_test_placeholder
-      - STRIPE_WEBHOOK_SECRET=whsec_placeholder
+      - STRIPE_SECRET_KEY=${STRIPE_SECRET_KEY:-}
+      - STRIPE_WEBHOOK_SECRET=${STRIPE_WEBHOOK_SECRET:-}
+      - FRONTEND_URL=${FRONTEND_URL:-http://localhost:8000}
     volumes:
       - ./backend:/app/backend
 
@@ -18,11 +20,25 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+    command: python serve_frontend.py 8000
     ports:
       - "8000:8000"
     environment:
       - BACKEND_URL=http://backend:8001
     volumes:
       - ./Website:/app/Website:ro
+    depends_on:
+      - backend
+
+  seed:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: python seed_products.py
+    restart: "no"
+    environment:
+      - DATABASE_URL=sqlite:////app/backend/database.db
+    volumes:
+      - ./backend:/app/backend
     depends_on:
       - backend

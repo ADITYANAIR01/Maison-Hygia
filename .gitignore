@@ -9,6 +9,8 @@ dist/
 .venv/
 venv/
 env/
+.ruff_cache/
+.pytest_cache/
 
 # Runtime / database
 *.db
