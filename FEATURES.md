@@ -28,13 +28,30 @@ The one feature that talks to this repo's backend (through the dev proxy):
 - **Product detail view** — fetches `GET /api/v1/products/{id}` for a selected product
 - **Add to bag** — posts to `POST /cart/add`. The backend reuses the client-supplied `session_id` (no new UUID minted), and the frontend writes the server-returned id to `localStorage` (`mh_bag_session`), so repeated adds persist to one cart.
 
+### Custom Admin Panel (added on top of the clone, in `Website/index.html`)
+
+A first-party admin products page that replaces the static clone shell on `/admin-products` with the repo's own FastAPI admin API:
+
+- **Route takeover** — when the SPA navigates to `/admin-products`, a custom full-screen panel (`#mh-admin-products`) loads and renders an admin product manager (topbar, stats cards, searchable product table, orders view)
+- **Products view** — lists all products (active + inactive) from `GET /api/v1/admin/products`, with per-row edit/delete actions
+- **Create/Edit modal** — multipart form (`#mh-admin-modal`) with name, SKU, slug, description, optional image upload, and a dynamic variant list (name, SKU, price, compare-at, stock); saved via `POST /api/v1/admin/products` or `PUT /api/v1/admin/products/{id}`
+- **Delete confirmation** — `#mh-admin-delete-modal` then `DELETE /api/v1/admin/products/{id}`
+- **Orders view** — reads carts/orders from `GET /api/v1/admin/orders`
+- **Toasts** — success/error feedback via `#mh-toast-container`
+- **Auth** — reads the Supabase access token from `localStorage` (`sb-*-auth-token`) and sends it as `Authorization: Bearer`; a friendly "Admin access required" state is shown when the API returns 401/403
+
 ### Backend API (`backend/`)
 
-FastAPI application (SQLAlchemy + SQLite by default) exposing three routers in `backend/routes.py`:
+FastAPI application (SQLAlchemy + SQLite by default) exposing four routers:
 
-- **Products** — list/search (`GET /api/v1/products/`, `routes.py:28-65`) and detail (`GET /api/v1/products/{product_id}`, `routes.py:68-101`)
-- **Cart** — view (`GET /cart/`, `routes.py:112-139`), add (`POST /cart/add`, `routes.py:142-208`), remove (`POST /cart/remove`, `routes.py:211-239`)
-- **Payment** — Stripe checkout session creation (`POST /payment/create-checkout-session`, `routes.py:246-304`) and webhook (`POST /payment/webhook`, `routes.py:307-338`)
+- **Products** — list/search (`GET /api/v1/products/`, `routes.py`) and detail (`GET /api/v1/products/{product_id}`, `routes.py`)
+- **Admin** (`/api/v1/admin`, `routes.py`) — role-gated via Supabase `user_roles` (`auth.py`):
+  - `GET /products` / `GET /products/{id}` — full catalog incl. inactive
+  - `POST /products` (multipart form + variants JSON + optional image upload) / `PUT /products/{id}` / `DELETE /products/{id}`
+  - `POST /variants`, `PUT /variants/{id}`, `DELETE /variants/{id}`, `PUT /variants/{id}/inventory`
+  - `GET /orders`, `GET /stats`
+- **Cart** — view (`GET /cart/`), add (`POST /cart/add`), remove (`POST /cart/remove`)
+- **Payment** — Stripe checkout session creation (`POST /payment/create-checkout-session`) and webhook (`POST /payment/webhook`)
 
 ORM models in `backend/models.py`: `Product`, `Variant`, `Inventory`, `Cart`, `CartItem`, `Tag` (products router only). Tables are created automatically on backend startup (`backend/main.py`).
 
@@ -56,7 +73,10 @@ ORM models in `backend/models.py`: `Product`, `Variant`, `Inventory`, `Cart`, `C
 | Product detail view (search feature) | Working | Calls `GET /api/v1/products/{id}` |
 | Add to bag (search feature) | Working | Sessions persist: backend adopts the client-supplied `session_id` for new carts, and the frontend stores the server-returned id to `localStorage` (`mh_bag_session`), so repeated adds reuse one cart |
 | Cart view (`GET /cart/`) | Working | Returns the empty payload `{"items": [], "total": 0, "total_quantity": 0}` without a `session_id` — no HTTP 500 |
-| Product list/search/detail API | Working | `routes.py:28-101`; `total` is the true match count before pagination now |
+| Product list/search/detail API | Working | `routes.py`; `total` is the true match count before pagination now |
+| Admin products panel | Working | Custom, FastAPI-backed overlay on `/admin-products`: product list, create/edit modal, delete confirmation, image upload, variants, toasts. Auth via Supabase token from `localStorage` (`auth.py`) |
+| Admin API (`/api/v1/admin`) | Working | Role-gated product/variant/inventory CRUD, orders list, stats. Form-data product create/update; JSON variants; optional image upload to `Website/assets/` |
+| Dev proxy error forwarding | Working | `cli.py serve` forwards backend status codes + bodies (401/403/422) instead of a blanket 502 |
 | Stripe checkout session creation | Working | Reads `STRIPE_SECRET_KEY` from env only (503 if unset); passes `metadata={"session_id": ...}`; redirect URLs built from `FRONTEND_URL` to `/cart/success?session_id={CHECKOUT_SESSION_ID}` and `/cart/cancel`. Requires a real `STRIPE_SECRET_KEY` to operate end-to-end |
 | Stripe webhook | Working | `metadata.session_id` is passed on the checkout session; `Cart.payment_status`/`status` columns added via idempotent dev migration (`ensure_schema`); marks the matching cart paid. Requires `STRIPE_WEBHOOK_SECRET` |
 | Catalog seeding (`seed_products.py`) | Working | Runs `create_all` itself (works on a fresh DB before the backend has started); upserts by slug on re-runs |
@@ -104,7 +124,7 @@ The items below are **aspirational suggestions only**. They are not in the codeb
 
 - **Connect the cloned React bundle to the FastAPI backend** — replace hard-coded catalogs and the Supabase checkout flow with the repo's own API and Stripe integration so the frontend and backend share one data layer. **Still open / out of scope** by the documented product decision: the bundle is minified and wired to a live Supabase project, and full migration would require the production data/Stripe story to be defined first.
 - **Order fulfillment** — persist orders server-side, update inventory on checkout, and reconcile via the Stripe webhook (the webhook currently only marks the cart paid).
-- **Admin dashboard for orders** — manage products, inventory, and orders from the API instead of the current static admin shell.
+- **Admin dashboard for orders** — manage orders from the API (the admin API already lists carts at `/api/v1/admin/orders`; order status updates and fulfillment controls are not yet exposed).
 - **Newsletter signup** — replace/back the Supabase `newsletter_subscribers` flow with a first-party backend endpoint.
 - **Rate limiting & auth hardening** — protect public endpoints (cart, checkout) from abuse.
 

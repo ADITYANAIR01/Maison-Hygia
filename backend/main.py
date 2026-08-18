@@ -2,11 +2,13 @@
 
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
+from .auth import AuthError
 from .database import ALLOWED_ORIGINS, ensure_schema
-from .routes import cart_router, payment_router, router
+from .routes import admin_router, cart_router, payment_router, router
 
 
 @asynccontextmanager
@@ -26,8 +28,15 @@ app.add_middleware(
     allow_headers=["*"],
 )
 app.include_router(router)
+app.include_router(admin_router)
 app.include_router(cart_router)
 app.include_router(payment_router)
+
+
+@app.exception_handler(AuthError)
+async def auth_error_handler(request: Request, exc: AuthError):
+    """Convert the custom AuthError into a proper JSON HTTP response."""
+    return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
 
 
 @app.get("/")

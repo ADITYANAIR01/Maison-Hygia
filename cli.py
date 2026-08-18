@@ -13,7 +13,7 @@ def seed(db: Session | None = None):
 
     from sqlalchemy import select
 
-    from backend.database import Base, SessionLocal, engine
+    from backend.database import Base, SessionLocal, engine, ensure_schema
     from backend.models import Inventory, Product, Variant
 
     PRODUCTS = [
@@ -148,6 +148,7 @@ def seed(db: Session | None = None):
     ]
 
     Base.metadata.create_all(bind=engine)
+    ensure_schema()
     own_session = db is None
     if own_session:
         db = SessionLocal()
@@ -196,6 +197,7 @@ def seed(db: Session | None = None):
 
 def serve_frontend():
     """Serve the frontend and proxy API calls to the backend."""
+    import urllib.error
     import urllib.request
     from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 
@@ -229,15 +231,20 @@ def serve_frontend():
                 req = urllib.request.Request(
                     target, data=body, method=self.command, headers=headers
                 )
-                with urllib.request.urlopen(req, timeout=PROXY_TIMEOUT) as resp:
-                    data = resp.read()
-                    self.send_response(resp.status)
-                    for k, v in resp.headers.items():
-                        if k.lower() in ("content-type", "cache-control", "location"):
-                            self.send_header(k, v)
-                    self.send_header("Content-Length", str(len(data)))
-                    self.end_headers()
-                    self.wfile.write(data)
+                try:
+                    resp = urllib.request.urlopen(req, timeout=PROXY_TIMEOUT)
+                except urllib.error.HTTPError as err:
+                    # Forward the backend's status code and body so the frontend
+                    # can handle auth errors (401/403) and validation errors (422).
+                    resp = err
+                data = resp.read()
+                self.send_response(resp.status)
+                for k, v in resp.headers.items():
+                    if k.lower() in ("content-type", "cache-control", "location"):
+                        self.send_header(k, v)
+                self.send_header("Content-Length", str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
             except Exception as e:  # noqa: BLE001
                 self.send_error(502, f"Bad gateway ({BACKEND_URL}): {e}")
 

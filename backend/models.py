@@ -11,10 +11,29 @@ from sqlalchemy import (
     String,
     Table,
     Text,
+    UniqueConstraint,
 )
 from sqlalchemy.orm import relationship
 
 from .database import Base
+
+# ---------- User Roles (for admin auth) ----------
+
+
+class UserRole(Base):
+    __tablename__ = "user_roles"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(
+        String, index=True, nullable=False
+    )  # Supabase user ID (UUID string)
+    role = Column(String, nullable=False)  # 'admin', 'editor', 'viewer'
+    created_at = Column(
+        DateTime, default=lambda: datetime.now(timezone.utc), nullable=False
+    )
+
+    __table_args__ = (UniqueConstraint("user_id", "role", name="uq_user_role"),)
+
 
 # ---------- Tags ----------
 
@@ -48,10 +67,15 @@ class Product(Base):
     slug = Column(String, unique=True, index=True, nullable=False)
     is_active = Column(Boolean, default=True, nullable=False)
     product_metadata = Column(JSON, nullable=True, default={})
+    # Primary image URL (stored as relative path from assets/)
+    image_url = Column(String, nullable=True)
 
     # Relations
     variants = relationship(
         "Variant", back_populates="product", cascade="all, delete-orphan"
+    )
+    images = relationship(
+        "ProductImage", back_populates="product", cascade="all, delete-orphan"
     )
 
     created_at = Column(
@@ -116,6 +140,27 @@ class Inventory(Base):
 
     # Relations
     variant = relationship("Variant", back_populates="inventory")
+
+
+# ---------- Product Images ----------
+
+
+class ProductImage(Base):
+    __tablename__ = "product_images"
+
+    id = Column(Integer, primary_key=True, index=True)
+    product_id = Column(Integer, ForeignKey("products.id"), nullable=False)
+    url = Column(String, nullable=False)  # Relative path from assets/
+    alt_text = Column(String, nullable=True)
+    sort_order = Column(Integer, default=0)
+    is_primary = Column(Boolean, default=False)
+
+    # Relations
+    product = relationship("Product", back_populates="images")
+
+    created_at = Column(
+        DateTime, default=lambda: datetime.now(timezone.utc), nullable=False
+    )
 
 
 # ---------- Cart ----------
