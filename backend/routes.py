@@ -17,7 +17,7 @@ from fastapi import (
 )
 from pydantic import BaseModel
 from sqlalchemy import func, select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from . import models
 from .auth import require_admin
@@ -49,7 +49,13 @@ def list_products(
     db: Session = Depends(get_db),
 ):
     """List products with pagination and search."""
-    query = select(models.Product).where(models.Product.is_active)
+    query = (
+        select(models.Product)
+        .options(
+            selectinload(models.Product.variants).selectinload(models.Variant.inventory)
+        )
+        .where(models.Product.is_active)
+    )
 
     if search:
         query = query.where(
@@ -439,7 +445,9 @@ def admin_list_products(
     db: Session = Depends(get_db),
 ):
     """List products for the admin panel, optionally including inactive ones."""
-    query = select(models.Product)
+    query = select(models.Product).options(
+        selectinload(models.Product.variants).selectinload(models.Variant.inventory)
+    )
     if search:
         query = query.where(
             models.Product.name.ilike(f"%{search}%")
@@ -800,7 +808,11 @@ def admin_list_orders(
     db: Session = Depends(get_db),
 ):
     """List carts for order management."""
-    query = select(models.Cart)
+    query = select(models.Cart).options(
+        selectinload(models.Cart.items)
+        .selectinload(models.CartItem.variant)
+        .selectinload(models.Variant.product)
+    )
     if status:
         query = query.where(models.Cart.status == status)
     query = query.order_by(models.Cart.created_at.desc())

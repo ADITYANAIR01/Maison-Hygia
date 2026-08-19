@@ -1,7 +1,7 @@
 """Authentication and authorization utilities for admin endpoints."""
 
 import os
-from functools import lru_cache
+import time
 
 import httpx
 from fastapi import Depends, status
@@ -21,6 +21,11 @@ SUPABASE_ISSUER = f"{SUPABASE_URL}/auth/v1" if SUPABASE_URL else None
 
 security = HTTPBearer(auto_error=False)
 
+# JWKS cache with 1-hour TTL
+_JWKS_CACHE: dict | None = None
+_JWKS_CACHE_TIME = 0
+JWKS_TTL_SECONDS = 3600
+
 
 class AuthError(Exception):
     """Authentication/authorization error."""
@@ -39,15 +44,23 @@ def get_db():
         db.close()
 
 
-@lru_cache(maxsize=1)
 def get_jwks() -> dict:
-    """Fetch and cache JWKS from Supabase."""
+    """Fetch and cache JWKS from Supabase with 1-hour TTL."""
+    global _JWKS_CACHE, _JWKS_CACHE_TIME
+
     if not SUPABASE_JWKS_URL:
         return {"keys": []}
+
+    now = time.time()
+    if _JWKS_CACHE is not None and (now - _JWKS_CACHE_TIME) < JWKS_TTL_SECONDS:
+        return _JWKS_CACHE
+
     try:
         response = httpx.get(SUPABASE_JWKS_URL, timeout=10.0)
         response.raise_for_status()
-        return response.json()
+        _JWKS_CACHE = response.json()
+        _JWKS_CACHE_TIME = now
+        return _JWKS_CACHE
     except Exception:  # noqa: BLE001 - degrade to empty JWKS on any fetch error
         return {"keys": []}
 

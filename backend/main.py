@@ -44,6 +44,11 @@ def root():
     return {"message": "Maison Hygia API is running", "version": "0.1.0"}
 
 
+@app.get("/health")
+def health():
+    return {"status": "ok"}
+
+
 def run_server(port: int = 8001, reload: bool = True):
     """Run the backend server (for local development)."""
     import uvicorn
