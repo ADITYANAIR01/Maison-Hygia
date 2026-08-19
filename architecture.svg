@@ -1,0 +1,92 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 660" role="img" aria-labelledby="t d">
+<title id="t">Maison Hygia - Target AWS Architecture</title>
+<desc id="d">Route 53 routes the web, admin, assets and auth subdomains to three CloudFront distributions, a Cognito Hosted UI and an ALB. CloudFront Web serves the S3 web bucket and proxies API, cart and payment paths to the ALB, which forwards to an EC2 auto scaling group running the backend on port 8001, backed by RDS PostgreSQL. Cognito sends verification email through SendGrid. CloudWatch monitors the ALB, EC2 and RDS.</desc>
+<defs>
+<marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#333"/></marker>
+<marker id="ar2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#666"/></marker>
+</defs>
+<style>
+.box{fill:#fff;stroke:#333;stroke-width:1.5}
+.dashed{fill:none;stroke:#666;stroke-width:1.5;stroke-dasharray:6 4}
+.solid{fill:none;stroke:#333;stroke-width:1.5}
+.lbl{font-family:Arial,Helvetica,sans-serif;fill:#333;text-anchor:middle}
+.t{font-size:13px;font-weight:bold}
+.s{font-size:10px}
+.n{font-size:10px;fill:#666;text-anchor:middle}
+</style>
+
+<!-- Route 53 -->
+<rect class="box" x="400" y="24" width="200" height="44" rx="4"/>
+<text class="lbl t" x="500" y="44">Route 53</text>
+<text class="lbl s" x="500" y="58">adityanair.tech</text>
+
+<!-- Row 2: CloudFront x3, Cognito, SendGrid -->
+<rect class="box" x="40" y="150" width="160" height="52" rx="4"/>
+<text class="lbl t" x="120" y="172">CloudFront Web</text>
+<text class="lbl s" x="120" y="186">maisonhygia.*</text>
+<rect class="box" x="240" y="150" width="160" height="52" rx="4"/>
+<text class="lbl t" x="320" y="172">CloudFront Admin</text>
+<text class="lbl s" x="320" y="186">admin.*</text>
+<rect class="box" x="440" y="150" width="160" height="52" rx="4"/>
+<text class="lbl t" x="520" y="172">CloudFront Assets</text>
+<text class="lbl s" x="520" y="186">assets.*</text>
+<rect class="box" x="640" y="150" width="150" height="52" rx="4"/>
+<text class="lbl t" x="715" y="172">Cognito Hosted UI</text>
+<text class="lbl s" x="715" y="186">auth.*</text>
+<rect class="box" x="830" y="150" width="140" height="52" rx="4"/>
+<text class="lbl t" x="900" y="172">SendGrid</text>
+<text class="lbl s" x="900" y="186">SMTP</text>
+
+<!-- Row 3: S3 x3 + ALB -->
+<rect class="box" x="40" y="300" width="160" height="52" rx="4"/>
+<text class="lbl t" x="120" y="322">S3 Web Bucket</text>
+<text class="lbl s" x="120" y="336">maison-hygia-web-prod</text>
+<rect class="box" x="240" y="300" width="160" height="52" rx="4"/>
+<text class="lbl t" x="320" y="322">S3 Admin Bucket</text>
+<text class="lbl s" x="320" y="336">maison-hygia-admin-prod</text>
+<rect class="box" x="440" y="300" width="160" height="52" rx="4"/>
+<text class="lbl t" x="520" y="322">S3 Assets Bucket</text>
+<text class="lbl s" x="520" y="336">maison-hygia-assets-prod</text>
+<rect class="box" x="640" y="300" width="150" height="52" rx="4"/>
+<text class="lbl t" x="715" y="322">ALB</text>
+<text class="lbl s" x="715" y="336">HTTPS 443 / api.*</text>
+
+<!-- Row 4: CloudWatch + EC2 ASG -->
+<rect class="box" x="40" y="440" width="160" height="52" rx="4"/>
+<text class="lbl t" x="120" y="462">CloudWatch</text>
+<text class="lbl s" x="120" y="476">Alarms / Logs / Budget</text>
+<rect class="box" x="640" y="440" width="150" height="52" rx="4"/>
+<text class="lbl t" x="715" y="462">EC2 ASG</text>
+<text class="lbl s" x="715" y="476">Docker port 8001</text>
+
+<!-- Row 5: RDS -->
+<rect class="box" x="640" y="560" width="150" height="52" rx="4"/>
+<text class="lbl t" x="715" y="582">RDS PostgreSQL 16</text>
+<text class="lbl s" x="715" y="596">Single-AZ t3.medium</text>
+
+<!-- Arrows: R53 -> row 2 -->
+<path class="solid" d="M 500 68 L 500 100 L 120 100 L 120 150" marker-end="url(#ar)"/>
+<path class="solid" d="M 500 68 L 500 100 L 320 100 L 320 150" marker-end="url(#ar)"/>
+<path class="solid" d="M 500 68 L 500 100 L 520 100 L 520 150" marker-end="url(#ar)"/>
+<path class="solid" d="M 500 68 L 500 100 L 715 100 L 715 150" marker-end="url(#ar)"/>
+<path class="dashed" d="M 600 46 L 985 46 L 985 326 L 790 326" marker-end="url(#ar2)"/>
+
+<!-- CloudFront -> S3 / ALB -->
+<path class="solid" d="M 120 202 L 120 300" marker-end="url(#ar)"/>
+<path class="solid" d="M 320 202 L 320 300" marker-end="url(#ar)"/>
+<path class="solid" d="M 520 202 L 520 300" marker-end="url(#ar)"/>
+<path class="solid" d="M 200 176 L 200 250 L 715 250 L 715 300" marker-end="url(#ar)"/>
+<text class="n" x="430" y="242">/api/*  /cart*  /payment*</text>
+
+<!-- Cognito -> SendGrid -->
+<path class="dashed" d="M 790 176 L 830 176" marker-end="url(#ar2)"/>
+
+<!-- ALB -> ASG -> RDS -->
+<path class="solid" d="M 715 352 L 715 440" marker-end="url(#ar)"/>
+<path class="solid" d="M 715 492 L 715 560" marker-end="url(#ar)"/>
+
+<!-- CloudWatch -> ASG / RDS -->
+<path class="dashed" d="M 200 466 L 640 466" marker-end="url(#ar2)"/>
+<path class="dashed" d="M 200 586 L 640 586" marker-end="url(#ar2)"/>
+</svg>

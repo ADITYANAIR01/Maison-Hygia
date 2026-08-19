@@ -14,6 +14,104 @@
       href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;0,500;1,300;1,400;1,500&family=Inter:wght@300;400;500;600&display=swap"
       rel="stylesheet"
     />
+    <!-- Supabase shim: the legacy bundle still initializes a Supabase client.
+         The AWS-migrated backend has no Supabase, so intercept all requests to
+         the old project domain and return benign, Supabase-shaped responses. -->
+    <script>
+      (function () {
+        var SUPABASE_HOST = 'cowggxamybvlpkgoyfve.supabase.co';
+
+        function isSupabase(url) {
+          try {
+            return new URL(url, window.location.href).hostname === SUPABASE_HOST;
+          } catch (e) {
+            return false;
+          }
+        }
+
+        function fakeJson(payload, status) {
+          return new Response(JSON.stringify(payload), {
+            status: status || 200,
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+
+        function handleSupabaseFetch(url, options) {
+          var method = (options && options.method) || 'GET';
+          var path = new URL(url, window.location.href).pathname;
+
+          if (method === 'POST') {
+            if (path.indexOf('/auth/v1/') === 0) {
+              return Promise.resolve(
+                fakeJson({
+                  access_token: '',
+                  token_type: 'bearer',
+                  expires_in: 3600,
+                  refresh_token: '',
+                  user: null,
+                })
+              );
+            }
+            if (path.indexOf('/rest/v1/rpc/') === 0) {
+              // has_paid_order -> false (anonymous cart checkout)
+              return Promise.resolve(fakeJson(false));
+            }
+            if (path.indexOf('/rest/v1/') === 0) {
+              return Promise.resolve(fakeJson([]));
+            }
+          }
+          if (path.indexOf('/auth/v1/user') === 0) {
+            return Promise.resolve(fakeJson({}));
+          }
+          return Promise.resolve(fakeJson({}));
+        }
+
+        var origFetch = window.fetch;
+        window.fetch = function (input, init) {
+          var url =
+            typeof input === 'string'
+              ? input
+              : input && input.url
+                ? input.url
+                : '';
+          if (isSupabase(url)) {
+            return handleSupabaseFetch(url, init || {});
+          }
+          return origFetch.apply(this, arguments);
+        };
+
+        if (window.XMLHttpRequest) {
+          var origOpen = XMLHttpRequest.prototype.open;
+          var origSend = XMLHttpRequest.prototype.send;
+          XMLHttpRequest.prototype.open = function (method, url) {
+            this.__mhSupabase = isSupabase(url);
+            return origOpen.apply(this, arguments);
+          };
+          XMLHttpRequest.prototype.send = function () {
+            if (this.__mhSupabase) {
+              var self = this;
+              setTimeout(function () {
+                try {
+                  Object.defineProperty(self, 'status', {
+                    get: function () {
+                      return 200;
+                    },
+                    configurable: true,
+                  });
+                  self.responseText = '{}';
+                  self.response = '{}';
+                  self.readyState = 4;
+                  if (self.onreadystatechange) self.onreadystatechange();
+                  if (self.onload) self.onload();
+                } catch (e) {}
+              }, 0);
+              return;
+            }
+            return origSend.apply(this, arguments);
+          };
+        }
+      })();
+    </script>
     <script type="module" crossorigin src="assets/index-DLFkKnAo.js"></script>
           <style>
 /*! tailwindcss v4.3.3 | MIT License | https://tailwindcss.com */
@@ -645,8 +743,8 @@
         font-size: 0.875rem;
         color: color-mix(in oklch, var(--foreground) 70%, transparent);
       }
-      /* Admin products page (full-screen takeover for /admin-products) */
-      .mh-admin-products {
+/* Checkout confirmation view (full-screen takeover for /checkout/success and /checkout/cancel) */
+      .mh-checkout-view {
         position: fixed;
         inset: 0;
         z-index: 60;
@@ -654,578 +752,103 @@
         color: var(--foreground);
         overflow-y: auto;
       }
-      .mh-admin-topbar {
-        position: sticky;
-        top: 0;
-        z-index: 5;
-        display: flex;
-        align-items: center;
-        gap: 1.5rem;
-        padding: 1rem 1.5rem;
-        border-bottom: 1px solid var(--border);
-        background: var(--background);
-      }
-      .mh-admin-brand {
-        font-family: 'Cormorant Garamond', serif;
-        font-size: 1.35rem;
-        font-weight: 500;
-        color: var(--foreground);
-        text-decoration: none;
-      }
-      .mh-admin-brand:hover {
-        color: var(--gold);
-      }
-      .mh-admin-nav {
-        display: flex;
-        gap: 0.25rem;
-        margin-left: auto;
-      }
-      .mh-admin-nav-link {
-        background: none;
-        border: none;
-        font: inherit;
-        font-size: 0.75rem;
-        letter-spacing: 0.18em;
-        text-transform: uppercase;
-        color: color-mix(in oklch, var(--foreground) 65%, transparent);
-        padding: 0.5rem 0.85rem;
-        border-radius: 9999px;
-        cursor: pointer;
-        transition: color 0.2s, background 0.2s;
-      }
-      .mh-admin-nav-link:hover {
-        color: var(--foreground);
-      }
-      .mh-admin-nav-link.is-active {
-        color: var(--cocoa);
-        background: var(--gold);
-      }
-      .mh-admin-main {
-        max-width: 80rem;
+      .mh-checkout-inner {
+        max-width: 42rem;
         margin: 0 auto;
-        padding: 2rem 1.5rem 4rem;
+        padding: 4rem 1.5rem 3rem;
       }
-      .mh-admin-head {
-        display: flex;
-        flex-wrap: wrap;
-        align-items: center;
-        gap: 1rem;
-        margin-bottom: 1.5rem;
-      }
-      .mh-admin-title {
-        font-family: 'Cormorant Garamond', serif;
-        font-size: 2rem;
-        line-height: 1.1;
-        margin: 0;
-      }
-      .mh-admin-head .mh-admin-actions {
-        display: flex;
-        align-items: center;
-        gap: 0.75rem;
-        margin-left: auto;
-      }
-      .mh-admin-search {
-        font: inherit;
-        color: var(--foreground);
-        border: 1px solid var(--border);
-        border-radius: 0.375rem;
-        padding: 0.5rem 0.85rem;
-        background: var(--background);
-        outline: none;
-        min-width: 13rem;
-      }
-      .mh-admin-search:focus {
-        box-shadow: 0 0 0 2px color-mix(in oklch, var(--gold) 40%, transparent);
-      }
-      .mh-admin-stats {
-        display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr));
-        gap: 0.85rem;
-        margin-bottom: 1.75rem;
-      }
-      .mh-admin-stat {
-        border: 1px solid var(--border);
-        border-radius: 0.5rem;
-        padding: 1rem 1.15rem;
-        background: color-mix(in oklch, var(--foreground) 3%, transparent);
-      }
-      .mh-admin-stat-label {
-        font-size: 0.7rem;
-        letter-spacing: 0.16em;
-        text-transform: uppercase;
-        color: color-mix(in oklch, var(--foreground) 60%, transparent);
-      }
-      .mh-admin-stat-value {
-        margin-top: 0.35rem;
-        font-family: 'Cormorant Garamond', serif;
-        font-size: 1.75rem;
-        line-height: 1;
-      }
-      .mh-admin-table-wrap {
-        border: 1px solid var(--border);
-        border-radius: 0.625rem;
-        overflow-x: auto;
-      }
-      .mh-admin-table {
-        width: 100%;
-        border-collapse: collapse;
-        font-size: 0.9rem;
-      }
-      .mh-admin-table th {
-        text-align: left;
-        font-size: 0.7rem;
-        letter-spacing: 0.16em;
-        text-transform: uppercase;
-        font-weight: 500;
-        color: color-mix(in oklch, var(--foreground) 60%, transparent);
-        padding: 0.85rem 1rem;
-        border-bottom: 1px solid var(--border);
-        white-space: nowrap;
-      }
-      .mh-admin-table td {
-        padding: 0.85rem 1rem;
-        border-bottom: 1px solid color-mix(in oklch, var(--border) 60%, transparent);
-        vertical-align: middle;
-      }
-      .mh-admin-table tr:last-child td {
-        border-bottom: none;
-      }
-      .mh-admin-table tbody tr:hover {
-        background: color-mix(in oklch, var(--gold) 6%, transparent);
-      }
-      .mh-admin-cell-name {
-        font-weight: 500;
-      }
-      .mh-admin-cell-sku {
-        font-size: 0.8rem;
-        color: color-mix(in oklch, var(--foreground) 60%, transparent);
-        white-space: nowrap;
-      }
-      .mh-admin-badge {
+      .mh-checkout-badge {
         display: inline-flex;
         align-items: center;
-        font-size: 0.7rem;
+        gap: 0.5rem;
+        padding: 0.35rem 0.9rem;
+        border: 1px solid var(--border);
+        border-radius: 9999px;
+        font-size: 0.75rem;
         letter-spacing: 0.12em;
         text-transform: uppercase;
-        border-radius: 9999px;
-        padding: 0.2rem 0.6rem;
-        white-space: nowrap;
-      }
-      .mh-admin-badge--active {
-        color: #166534;
-        background: #dcfce7;
-      }
-      .mh-admin-badge--inactive {
         color: color-mix(in oklch, var(--foreground) 70%, transparent);
-        background: color-mix(in oklch, var(--foreground) 10%, transparent);
       }
-      .mh-admin-row-actions {
-        display: flex;
-        gap: 0.4rem;
-        justify-content: flex-end;
-        white-space: nowrap;
+      .mh-checkout-title {
+        margin: 1.25rem 0 0.5rem;
+        font-family: 'Cormorant Garamond', serif;
+        font-size: 2.25rem;
+        line-height: 1.1;
+        font-weight: 500;
       }
-      .mh-admin-icon-btn {
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        width: 2rem;
-        height: 2rem;
-        border: 1px solid var(--border);
-        border-radius: 0.375rem;
-        background: none;
-        color: color-mix(in oklch, var(--foreground) 70%, transparent);
-        cursor: pointer;
-        transition: border-color 0.2s, color 0.2s;
-      }
-      .mh-admin-icon-btn:hover {
-        border-color: var(--gold);
-        color: var(--cocoa);
-      }
-      .mh-admin-icon-btn--danger:hover {
-        border-color: #dc2626;
-        color: #dc2626;
-      }
-      .mh-admin-empty,
-      .mh-admin-loading {
-        padding: 3rem 1rem;
-        text-align: center;
+      .mh-checkout-subtitle {
+        margin: 0 0 2rem;
         color: color-mix(in oklch, var(--foreground) 60%, transparent);
       }
-      .mh-admin-auth {
-        max-width: 32rem;
-        margin: 4rem auto;
-        text-align: center;
-        padding: 2rem;
-      }
-      .mh-admin-auth h2 {
-        font-family: 'Cormorant Garamond', serif;
-        font-size: 1.75rem;
-        margin-bottom: 0.75rem;
-      }
-      .mh-admin-auth p {
-        font-size: 0.9rem;
-        color: color-mix(in oklch, var(--foreground) 65%, transparent);
-      }
-      .mh-admin-auth code {
-        display: inline-block;
-        margin-top: 0.75rem;
-        font-size: 0.75rem;
-        background: color-mix(in oklch, var(--foreground) 8%, transparent);
-        border-radius: 0.375rem;
-        padding: 0.4rem 0.6rem;
-      }
-      /* Modals */
-      .mh-admin-modal-overlay {
-        position: fixed;
-        inset: 0;
-        z-index: 100;
-        background: rgb(0 0 0 / 0.45);
-      }
-      .mh-admin-modal {
-        position: fixed;
-        top: 2.5rem;
-        left: 50%;
-        transform: translateX(-50%);
-        z-index: 110;
-        width: 100%;
-        max-width: 46rem;
-        max-height: 88vh;
-        overflow-y: auto;
-        padding: 0 1rem;
-        box-sizing: border-box;
-      }
-      .mh-admin-modal-sm {
-        max-width: 26rem;
-      }
-      .mh-admin-modal-content {
-        background: var(--background);
-        color: var(--foreground);
+      .mh-checkout-card {
         border: 1px solid var(--border);
-        border-radius: 0.75rem;
-        box-shadow: 0 20px 25px -5px rgb(0 0 0 / 0.15), 0 10px 10px -5px rgb(0 0 0 / 0.05);
-        overflow: hidden;
+        border-radius: 1rem;
+        padding: 1.5rem;
+        background: color-mix(in oklch, var(--foreground) 2%, transparent);
       }
-      .mh-admin-modal-header {
+      .mh-checkout-row {
         display: flex;
-        align-items: center;
         justify-content: space-between;
         gap: 1rem;
-        padding: 1.25rem 1.5rem;
-        border-bottom: 1px solid var(--border);
-      }
-      .mh-admin-modal-title {
-        font-family: 'Cormorant Garamond', serif;
-        font-size: 1.5rem;
-        line-height: 1.2;
-        margin: 0;
-      }
-      .mh-admin-modal-close {
-        background: none;
-        border: none;
-        cursor: pointer;
-        color: color-mix(in oklch, var(--foreground) 70%, transparent);
-        font-size: 1.75rem;
-        line-height: 1;
-        padding: 0.25rem;
-        transition: color 0.2s;
-      }
-      .mh-admin-modal-close:hover {
-        color: var(--foreground);
-      }
-      .mh-admin-modal-body {
-        padding: 1.5rem;
-      }
-      .mh-admin-modal-body p {
-        margin: 0;
+        padding: 0.65rem 0;
+        border-bottom: 1px solid color-mix(in oklch, var(--border) 60%, transparent);
         font-size: 0.925rem;
-        line-height: 1.6;
-        color: color-mix(in oklch, var(--foreground) 75%, transparent);
       }
-      .mh-admin-delete-warning {
-        margin-top: 0.6rem;
-        font-size: 0.8rem !important;
-        color: #dc2626 !important;
+      .mh-checkout-row:last-child {
+        border-bottom: none;
       }
-      .mh-admin-form {
-        padding: 1.5rem;
-      }
-      .mh-admin-form-grid {
-        display: grid;
-        grid-template-columns: 1fr;
-        gap: 1rem;
-      }
-      @media (min-width: 640px) {
-        .mh-admin-form-grid {
-          grid-template-columns: 1fr 1fr;
-        }
-      }
-      .mh-admin-form-field {
-        display: flex;
-        flex-direction: column;
-        gap: 0.4rem;
-      }
-      .mh-admin-full-width {
-        grid-column: 1 / -1;
-      }
-      .mh-admin-label {
-        font-size: 0.78rem;
-        letter-spacing: 0.1em;
-        text-transform: uppercase;
-        color: color-mix(in oklch, var(--foreground) 65%, transparent);
-      }
-      .mh-admin-input,
-      .mh-admin-textarea {
-        font: inherit;
-        color: var(--foreground);
-        border: 1px solid var(--border);
-        border-radius: 0.375rem;
-        padding: 0.55rem 0.8rem;
-        background: var(--background);
-        outline: none;
-        transition: box-shadow 0.2s;
-      }
-      .mh-admin-input:focus,
-      .mh-admin-textarea:focus {
-        box-shadow: 0 0 0 2px color-mix(in oklch, var(--gold) 40%, transparent);
-      }
-      .mh-admin-textarea {
-        resize: vertical;
-        min-height: 6rem;
-      }
-      .mh-admin-error {
-        font-size: 0.78rem;
-        color: #dc2626;
-        margin: 0;
-      }
-      .mh-admin-fieldset {
-        margin: 1.25rem 0 0;
-        padding: 1rem 1rem 0.5rem;
-        border: 1px solid var(--border);
-        border-radius: 0.5rem;
-      }
-      .mh-admin-legend {
-        font-size: 0.78rem;
-        letter-spacing: 0.1em;
-        text-transform: uppercase;
-        color: color-mix(in oklch, var(--foreground) 65%, transparent);
-        padding: 0 0.4rem;
-      }
-      .mh-admin-image-upload {
-        display: flex;
-        flex-direction: column;
-        gap: 0.75rem;
-      }
-      .mh-admin-image-preview {
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        gap: 0.35rem;
-        padding: 1.5rem;
-        border: 1px dashed color-mix(in oklch, var(--border) 120%, transparent);
-        border-radius: 0.5rem;
-        cursor: pointer;
-        transition: border-color 0.2s;
-      }
-      .mh-admin-image-preview:hover {
-        border-color: var(--gold);
-      }
-      .mh-admin-upload-icon {
-        width: 2rem;
-        height: 2rem;
-        color: color-mix(in oklch, var(--foreground) 55%, transparent);
-      }
-      .mh-admin-upload-text {
-        font-size: 0.875rem;
-        color: var(--foreground);
-        margin: 0;
-      }
-      .mh-admin-upload-hint {
-        font-size: 0.75rem;
-        color: color-mix(in oklch, var(--foreground) 55%, transparent);
-        margin: 0;
-      }
-      .mh-admin-image-current {
-        width: 100%;
-        max-height: 12rem;
-        object-fit: contain;
-        border-radius: 0.5rem;
-      }
-      .mh-admin-variants-list {
-        display: flex;
-        flex-direction: column;
-        gap: 0.65rem;
-      }
-      .mh-admin-variant-row {
-        display: grid;
-        grid-template-columns: 1fr;
-        gap: 0.5rem;
-        padding: 0.75rem;
-        border: 1px solid var(--border);
-        border-radius: 0.5rem;
-        background: color-mix(in oklch, var(--foreground) 3%, transparent);
-      }
-      @media (min-width: 640px) {
-        .mh-admin-variant-row {
-          grid-template-columns: 2fr 1fr 1fr 1fr 1fr auto;
-          align-items: end;
-        }
-      }
-      .mh-admin-variant-row .mh-admin-form-field {
-        gap: 0.25rem;
-      }
-      .mh-admin-variant-row .mh-admin-label {
-        font-size: 0.68rem;
-      }
-      .mh-admin-variant-remove {
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        width: 2rem;
-        height: 2rem;
-        border: 1px solid var(--border);
-        border-radius: 0.375rem;
-        background: none;
-        color: color-mix(in oklch, var(--foreground) 65%, transparent);
-        cursor: pointer;
-        transition: color 0.2s, border-color 0.2s;
-      }
-      .mh-admin-variant-remove:hover {
-        color: #dc2626;
-        border-color: #dc2626;
-      }
-      .mh-admin-add-variant {
-        display: inline-flex;
-        align-items: center;
-        gap: 0.45rem;
-        margin-top: 0.75rem;
-        background: none;
-        border: 1px dashed var(--border);
-        border-radius: 0.375rem;
-        color: color-mix(in oklch, var(--foreground) 70%, transparent);
-        font: inherit;
-        font-size: 0.875rem;
-        padding: 0.5rem 0.85rem;
-        cursor: pointer;
-        transition: color 0.2s, border-color 0.2s;
-      }
-      .mh-admin-add-variant:hover {
-        color: var(--cocoa);
-        border-color: var(--gold);
-      }
-      .mh-admin-icon-sm {
-        width: 0.9rem;
-        height: 0.9rem;
-      }
-      .mh-admin-form-actions {
-        display: flex;
-        justify-content: flex-end;
-        gap: 0.75rem;
-        padding: 1.25rem 1.5rem;
+      .mh-checkout-row--total {
         border-top: 1px solid var(--border);
+        border-bottom: none;
+        margin-top: 0.5rem;
+        padding-top: 1rem;
+        font-weight: 600;
       }
-      .mh-admin-btn {
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        gap: 0.5rem;
-        font: inherit;
-        font-size: 0.85rem;
-        font-weight: 500;
-        letter-spacing: 0.06em;
-        text-transform: uppercase;
-        border-radius: 0.375rem;
-        padding: 0.65rem 1.25rem;
-        cursor: pointer;
-        transition: background 0.2s, opacity 0.2s, border-color 0.2s;
+      .mh-checkout-actions {
+        display: flex;
+        gap: 0.75rem;
+        margin-top: 1.75rem;
       }
-      .mh-admin-btn:disabled {
-        opacity: 0.6;
-        cursor: default;
-      }
-      .mh-admin-btn-secondary {
-        background: none;
-        border: 1px solid var(--border);
-        color: var(--foreground);
-      }
-      .mh-admin-btn-secondary:hover {
-        border-color: var(--gold);
-        color: var(--cocoa);
-      }
-      .mh-admin-btn-primary {
-        background: var(--gold);
-        border: 1px solid var(--gold);
-        color: var(--cocoa);
-      }
-      .mh-admin-btn-primary:hover {
-        background: color-mix(in oklch, var(--gold) 90%, black);
-      }
-      .mh-admin-btn-danger {
-        background: none;
-        border: 1px solid #dc2626;
-        color: #dc2626;
-      }
-      .mh-admin-btn-danger:hover {
-        background: #dc2626;
-        color: #fff;
-      }
-      .mh-admin-spinner {
-        width: 1rem;
-        height: 1rem;
-        border: 2px solid currentColor;
-        border-top-color: transparent;
+      .mh-checkout-btn {
+        flex: 1;
+        padding: 0.8rem 1.25rem;
         border-radius: 9999px;
-        animation: mh-spin 0.7s linear infinite;
+        font-size: 0.9rem;
+        font-weight: 500;
+        text-align: center;
+        cursor: pointer;
+        border: 1px solid var(--border);
+        background: transparent;
+        color: var(--foreground);
+        transition: opacity 0.2s ease;
       }
-      @keyframes mh-spin {
-        to {
-          transform: rotate(360deg);
-        }
-      }
-      /* Toasts */
-      .mh-toast-container {
-        position: fixed;
-        bottom: 1.5rem;
-        right: 1.5rem;
-        z-index: 200;
-        display: flex;
-        flex-direction: column;
-        gap: 0.6rem;
-        max-width: 22rem;
-      }
-      .mh-toast {
-        display: flex;
-        align-items: flex-start;
-        gap: 0.6rem;
+      .mh-checkout-btn--primary {
         background: var(--foreground);
         color: var(--background);
-        border-radius: 0.5rem;
-        padding: 0.8rem 1rem;
+        border-color: var(--foreground);
+      }
+      .mh-checkout-btn:hover {
+        opacity: 0.85;
+      }
+      .mh-checkout-note {
+        margin-top: 1.5rem;
+        font-size: 0.8rem;
+        text-align: center;
+        color: color-mix(in oklch, var(--foreground) 50%, transparent);
+      }
+      .mh-checkout-error {
+        margin-top: 1rem;
+        padding: 0.9rem 1rem;
+        border: 1px solid color-mix(in oklch, #dc2626 40%, transparent);
+        border-radius: 0.6rem;
+        background: color-mix(in oklch, #dc2626 8%, transparent);
+        color: #dc2626;
         font-size: 0.875rem;
-        box-shadow: 0 10px 15px -3px rgb(0 0 0 / 0.15);
-        animation: mh-toast-in 0.25s ease-out;
       }
-      .mh-toast--success {
-        background: #166534;
-        color: #fff;
-      }
-      .mh-toast--error {
-        background: #dc2626;
-        color: #fff;
-      }
-      .mh-toast--info {
-        background: color-mix(in oklch, var(--foreground) 90%, transparent);
-        color: var(--background);
-      }
-      @keyframes mh-toast-in {
-        from {
-          opacity: 0;
-          transform: translateY(8px);
-        }
-        to {
-          opacity: 1;
-          transform: translateY(0);
-        }
+      .mh-checkout-loading {
+        padding: 2rem 0;
+        text-align: center;
+        color: color-mix(in oklch, var(--foreground) 60%, transparent);
       }
     </style>
     </head>
@@ -1293,103 +916,6 @@
       </div>
     </div>
 
-    <!-- Admin Products Page Container (rendered when route is /admin-products) -->
-    <div id="mh-admin-products" class="mh-admin-products hidden"></div>
-
-    <!-- Admin Product Modal (Create/Edit) -->
-    <div id="mh-admin-modal-overlay" class="mh-admin-modal-overlay hidden"></div>
-    <div id="mh-admin-modal" class="mh-admin-modal hidden" role="dialog" aria-modal="true" aria-labelledby="mh-admin-modal-title">
-      <div class="mh-admin-modal-content">
-        <div class="mh-admin-modal-header">
-          <h2 id="mh-admin-modal-title" class="mh-admin-modal-title">Create Product</h2>
-          <button type="button" class="mh-admin-modal-close" id="mh-admin-modal-close" aria-label="Close modal">×</button>
-        </div>
-        <form id="mh-admin-form" class="mh-admin-form" enctype="multipart/form-data">
-          <input type="hidden" name="id" id="mh-admin-form-id" />
-          <div class="mh-admin-form-grid">
-            <div class="mh-admin-form-field">
-              <label for="mh-admin-name" class="mh-admin-label">Product Name *</label>
-              <input type="text" id="mh-admin-name" name="name" class="mh-admin-input" required autocomplete="off" />
-              <p class="mh-admin-error hidden" id="mh-admin-name-error"></p>
-            </div>
-            <div class="mh-admin-form-field">
-              <label for="mh-admin-sku" class="mh-admin-label">SKU *</label>
-              <input type="text" id="mh-admin-sku" name="sku" class="mh-admin-input" required autocomplete="off" />
-              <p class="mh-admin-error hidden" id="mh-admin-sku-error"></p>
-            </div>
-            <div class="mh-admin-form-field mh-admin-full-width">
-              <label for="mh-admin-slug" class="mh-admin-label">Slug *</label>
-              <input type="text" id="mh-admin-slug" name="slug" class="mh-admin-input" required autocomplete="off" />
-              <p class="mh-admin-error hidden" id="mh-admin-slug-error"></p>
-            </div>
-            <div class="mh-admin-form-field mh-admin-full-width">
-              <label for="mh-admin-description" class="mh-admin-label">Description</label>
-              <textarea id="mh-admin-description" name="description" class="mh-admin-textarea" rows="4"></textarea>
-            </div>
-          </div>
-
-          <fieldset class="mh-admin-fieldset">
-            <legend class="mh-admin-legend">Product Image</legend>
-            <div class="mh-admin-image-upload" id="mh-admin-image-upload">
-              <input type="file" id="mh-admin-image-input" name="image" accept="image/*" class="hidden" />
-              <div class="mh-admin-image-preview" id="mh-admin-image-preview">
-                <svg class="mh-admin-upload-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
-                  <path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5m-13.5-9L12 3m0 0l4.5 4.5M12 3v13.5" />
-                </svg>
-                <p class="mh-admin-upload-text">Drag & drop an image or click to browse</p>
-                <p class="mh-admin-upload-hint">PNG, JPG up to 5MB</p>
-              </div>
-              <img id="mh-admin-image-current" class="mh-admin-image-current hidden" alt="Current product image" />
-              <p class="mh-admin-error hidden" id="mh-admin-image-error"></p>
-            </div>
-          </fieldset>
-
-          <fieldset class="mh-admin-fieldset">
-            <legend class="mh-admin-legend">Variants</legend>
-            <div id="mh-admin-variants-list" class="mh-admin-variants-list"></div>
-            <button type="button" class="mh-admin-add-variant" id="mh-admin-add-variant">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true" class="mh-admin-icon-sm">
-                <path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
-              </svg>
-              Add Variant
-            </button>
-          </fieldset>
-
-          <div class="mh-admin-form-actions">
-            <button type="button" class="mh-admin-btn mh-admin-btn-secondary" id="mh-admin-cancel">Cancel</button>
-            <button type="submit" class="mh-admin-btn mh-admin-btn-primary" id="mh-admin-submit">
-              <span class="mh-admin-btn-text">Save Product</span>
-              <span class="mh-admin-spinner hidden" aria-hidden="true"></span>
-            </button>
-          </div>
-        </form>
-      </div>
-    </div>
-
-    <!-- Admin Delete Confirmation Modal -->
-    <div id="mh-admin-delete-overlay" class="mh-admin-modal-overlay hidden"></div>
-    <div id="mh-admin-delete-modal" class="mh-admin-modal mh-admin-modal-sm hidden" role="dialog" aria-modal="true" aria-labelledby="mh-admin-delete-title">
-      <div class="mh-admin-modal-content">
-        <div class="mh-admin-modal-header">
-          <h2 id="mh-admin-delete-title" class="mh-admin-modal-title">Delete Product</h2>
-          <button type="button" class="mh-admin-modal-close" id="mh-admin-delete-close" aria-label="Close modal">×</button>
-        </div>
-        <div class="mh-admin-modal-body">
-          <p id="mh-admin-delete-message">Are you sure you want to delete this product? This action cannot be undone.</p>
-          <p class="mh-admin-delete-warning">All variants and inventory data will be permanently removed.</p>
-        </div>
-        <div class="mh-admin-form-actions">
-          <button type="button" class="mh-admin-btn mh-admin-btn-secondary" id="mh-admin-delete-cancel">Cancel</button>
-          <button type="button" class="mh-admin-btn mh-admin-btn-danger" id="mh-admin-delete-confirm">
-            <span class="mh-admin-btn-text">Delete</span>
-            <span class="mh-admin-spinner hidden" aria-hidden="true"></span>
-          </button>
-        </div>
-      </div>
-    </div>
-
-    <!-- Toast Container -->
-    <div id="mh-toast-container" class="mh-toast-container" aria-live="polite" aria-atomic="true"></div>
 
     <script>
       const searchPanel = document.getElementById('search-panel');
@@ -1402,9 +928,9 @@
       const fullSearchResults = document.getElementById('fullsearch-results');
 
       const imageCandidates = (slug) => [
-        `/assets/${slug}.png`,
-        `/assets/${slug}-2.png`,
-        `/assets/${slug}-3.png`,
+        `assets/${slug}.png`,
+        `assets/${slug}-2.png`,
+        `assets/${slug}-3.png`,
       ];
 
       const productImg = (slug, alt, cls) =>
@@ -1882,6 +1408,7 @@
         }
       };
 
+      // ----- Full-screen search (Enter or ?search= URL) -----
       const showFullSearch = (query) => {
         fullSearchInput.value = query;
         fullSearchResults.scrollTop = 0;
@@ -1971,624 +1498,129 @@
           closeProductView();
           return;
         }
-        if (!document.getElementById('mh-admin-modal').classList.contains('hidden')) {
-          mhAdminCloseModal();
-          return;
-        }
-        if (!document.getElementById('mh-admin-delete-modal').classList.contains('hidden')) {
-          mhAdminCloseDeleteModal();
-          return;
-        }
         searchPanel.classList.add('hidden');
         suggestions.classList.add('hidden');
         updateToggle(false);
       });
 
-      // ----- Admin Products page (custom, FastAPI-backed) -----
-      const mhAdminEl = document.getElementById('mh-admin-products');
-      const mhToastEl = document.getElementById('mh-toast-container');
-      let mhAdminActive = false;
-      let mhAdminProductsCache = [];
-      let mhAdminCurrentView = 'products';
+// ----- Checkout confirmation view (custom, FastAPI-backed) -----
+      const mhCheckoutEl = document.createElement('div');
+      mhCheckoutEl.id = 'mh-checkout-view';
+      mhCheckoutEl.className = 'mh-checkout-view hidden';
+      document.body.appendChild(mhCheckoutEl);
 
-      const mhToast = (message, type = 'info') => {
-        const el = document.createElement('div');
-        el.className = `mh-toast mh-toast--${type}`;
-        el.textContent = message;
-        mhToastEl.appendChild(el);
-        setTimeout(() => {
-          el.style.opacity = '0';
-          el.style.transition = 'opacity 0.3s';
-          setTimeout(() => el.remove(), 300);
-        }, 3200);
-      };
-
-      const mhGetSupabaseToken = () => {
-        for (let i = 0; i < localStorage.length; i++) {
-          const key = localStorage.key(i);
-          if (/^sb-.+-auth-token$/.test(key)) {
-            try {
-              const data = JSON.parse(localStorage.getItem(key));
-              if (data && data.access_token) return data.access_token;
-            } catch (err) {
-              /* ignore malformed tokens */
-            }
-          }
-        }
-        return null;
-      };
-
-      const mhAdminFetch = async (path, options = {}) => {
-        const token = mhGetSupabaseToken();
-        const headers = Object.assign({}, options.headers || {});
-        if (token) headers['Authorization'] = `Bearer ${token}`;
-        const res = await fetch(`/api/v1/admin${path}`, Object.assign({}, options, { headers }));
-        return res;
-      };
-
-      const mhAdminAuthState = () => {
-        const token = mhGetSupabaseToken();
-        if (!token) return { signedIn: false };
+      const mhFormatMoney = (amount, currency) => {
         try {
-          const data = JSON.parse(
-            Array.from({ length: localStorage.length }, (_, i) => localStorage.key(i))
-              .filter((k) => /^sb-.+-auth-token$/.test(k))
-              .map((k) => localStorage.getItem(k))
-              .find((v) => v)
-          );
-          return { signedIn: true, email: (data.user && data.user.email) || null };
-        } catch (err) {
-          return { signedIn: true, email: null };
+          return new Intl.NumberFormat('en-US', {
+            style: 'currency',
+            currency: (currency || 'usd').toUpperCase(),
+          }).format(amount);
+        } catch (e) {
+          return `$${Number(amount).toFixed(2)}`;
         }
       };
 
-      const mhAdminSignOut = async () => {
-        const token = mhGetSupabaseToken();
-        if (token) {
-          try {
-            await fetch('https://cowggxamybvlpkgoyfve.supabase.co/auth/v1/logout', {
-              method: 'POST',
-              headers: {
-                Authorization: `Bearer ${token}`,
-                apikey: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9',
-              },
-            });
-          } catch (err) {
-            /* ignore network errors on sign out */
-          }
-        }
-        const sbKeys = Array.from({ length: localStorage.length }, (_, i) => localStorage.key(i)).filter(
-          (k) => /^sb-.+-auth-token$/.test(k)
-        );
-        sbKeys.forEach((k) => localStorage.removeItem(k));
-        window.location.href = '/auth';
+      const mhCheckoutContinue = () => {
+        document.getElementById('mh-checkout-continue').addEventListener('click', () => {
+          window.location.href = '/';
+        });
       };
 
-      const mhRenderAdminAuthRequired = (email) => {
-        mhAdminEl.innerHTML = `
-          <div class="mh-admin-topbar">
-            <a class="mh-admin-brand" href="/">Maison Hygia</a>
-            <nav class="mh-admin-nav">
-              <button type="button" class="mh-admin-nav-link is-active">Admin</button>
-            </nav>
-          </div>
-          <div class="mh-admin-main">
-            <div class="mh-admin-auth">
-              <h2>Admin access required</h2>
-              <p>You are signed in as <strong>${escapeHtml(email || 'an unknown user')}</strong> but this account is not an admin yet.</p>
-              <p>To grant admin access, run this in the Supabase SQL editor:</p>
-              <code>INSERT INTO public.user_roles (user_id, role) SELECT id, 'admin' FROM auth.users WHERE email = '${escapeHtml(email || 'you@example.com')}';</code>
-              <div style="margin-top:2rem">
-                <button type="button" class="mh-admin-btn mh-admin-btn-secondary" id="mh-admin-signout">Sign out</button>
-              </div>
-            </div>
-          </div>
-        `;
-        document.getElementById('mh-admin-signout').addEventListener('click', mhAdminSignOut);
-      };
-
-      const mhRenderAdminLoading = () => {
-        mhAdminEl.innerHTML = `
-          <div class="mh-admin-topbar">
-            <a class="mh-admin-brand" href="/">Maison Hygia</a>
-            <nav class="mh-admin-nav">
-              <button type="button" class="mh-admin-nav-link is-active" data-view="products">Products</button>
-              <button type="button" class="mh-admin-nav-link" data-view="orders">Orders</button>
-            </nav>
-          </div>
-          <div class="mh-admin-main">
-            <div class="mh-admin-loading">Loading admin panel...</div>
-          </div>
-        `;
-        mhAdminWireNav();
-      };
-
-      const mhAdminStatusBadge = (active) =>
-        active
-          ? '<span class="mh-admin-badge mh-admin-badge--active">Active</span>'
-          : '<span class="mh-admin-badge mh-admin-badge--inactive">Inactive</span>';
-
-      const mhAdminProductImage = (product) => {
-        if (product.image_url) return product.image_url;
-        return `/assets/${product.slug}.png`;
-      };
-
-      const mhRenderAdminProducts = (products, stats) => {
-        const statCards = stats
-          ? `
-            <div class="mh-admin-stats">
-              <div class="mh-admin-stat">
-                <div class="mh-admin-stat-label">Products</div>
-                <div class="mh-admin-stat-value">${stats.products}</div>
-              </div>
-              <div class="mh-admin-stat">
-                <div class="mh-admin-stat-label">Active</div>
-                <div class="mh-admin-stat-value">${stats.active_products}</div>
-              </div>
-              <div class="mh-admin-stat">
-                <div class="mh-admin-stat-label">Variants</div>
-                <div class="mh-admin-stat-value">${stats.variants}</div>
-              </div>
-              <div class="mh-admin-stat">
-                <div class="mh-admin-stat-label">Orders</div>
-                <div class="mh-admin-stat-value">${stats.orders}</div>
-              </div>
-              <div class="mh-admin-stat">
-                <div class="mh-admin-stat-label">Paid</div>
-                <div class="mh-admin-stat-value">${stats.paid_orders}</div>
-              </div>
-            </div>
-          `
-          : '';
-
-        const rows = products
+      const mhRenderCheckoutSuccess = (order) => {
+        const items = (order.items || [])
           .map(
-            (p) => `
-              <tr data-id="${p.id}">
-                <td>
-                  <div class="mh-admin-cell-name">${escapeHtml(p.name)}</div>
-                  <div class="mh-admin-cell-sku">${escapeHtml(p.sku)}</div>
-                </td>
-                <td>${mhAdminStatusBadge(p.is_active)}</td>
-                <td>${p.variants.length}</td>
-                <td>$${p.variants[0] ? p.variants[0].price : '—'}</td>
-                <td>${p.variants[0] ? p.variants[0].inventory_quantity : 0}</td>
-                <td>
-                  <div class="mh-admin-row-actions">
-                    <button type="button" class="mh-admin-icon-btn" data-action="edit" aria-label="Edit ${escapeHtml(p.name)}">
-                      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M16.86 4.49l2.65 2.65L7.2 19.44 3.6 20.4l.96-3.6L16.86 4.49zM14 6.5l3.5 3.5"/></svg>
-                    </button>
-                    <button type="button" class="mh-admin-icon-btn mh-admin-icon-btn--danger" data-action="delete" aria-label="Delete ${escapeHtml(p.name)}">
-                      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M6 7h12M9 7V5a1 1 0 011-1h4a1 1 0 011 1v2m1 0v12a2 2 0 01-2 2H8a2 2 0 01-2-2V7h10zM10 11v6M14 11v6"/></svg>
-                    </button>
-                  </div>
-                </td>
-              </tr>
-            `
+            (it) => `
+              <div class="mh-checkout-row">
+                <span>${escapeHtml(it.name)} × ${it.quantity}</span>
+                <span>${mhFormatMoney(parseFloat(it.price) * it.quantity, order.currency)}</span>
+              </div>`
           )
           .join('');
 
-        mhAdminEl.innerHTML = `
-          <div class="mh-admin-topbar">
-            <a class="mh-admin-brand" href="/">Maison Hygia</a>
-            <nav class="mh-admin-nav">
-              <button type="button" class="mh-admin-nav-link is-active" data-view="products">Products</button>
-              <button type="button" class="mh-admin-nav-link" data-view="orders">Orders</button>
-            </nav>
-          </div>
-          <div class="mh-admin-main">
-            <div class="mh-admin-head">
-              <h1 class="mh-admin-title">Products</h1>
-              <div class="mh-admin-actions">
-                <input type="search" class="mh-admin-search" id="mh-admin-search" placeholder="Search products..." />
-                <button type="button" class="mh-admin-btn mh-admin-btn-primary" id="mh-admin-new">New product</button>
+        mhCheckoutEl.innerHTML = `
+          <div class="mh-checkout-inner">
+            <span class="mh-checkout-badge">Order confirmed</span>
+            <h1 class="mh-checkout-title">Thank you, ${escapeHtml(order.customer_name || 'friend')}.</h1>
+            <p class="mh-checkout-subtitle">Your order has been received. A confirmation email is on its way to ${escapeHtml(order.customer_email || 'your inbox')}.</p>
+            <div class="mh-checkout-card">
+              ${items}
+              <div class="mh-checkout-row mh-checkout-row--total">
+                <span>Total</span>
+                <span>${mhFormatMoney(order.total, order.currency)}</span>
               </div>
             </div>
-            ${statCards}
-            <div class="mh-admin-table-wrap">
-              <table class="mh-admin-table">
-                <thead>
-                  <tr>
-                    <th>Product</th>
-                    <th>Status</th>
-                    <th>Variants</th>
-                    <th>Price</th>
-                    <th>Stock</th>
-                    <th style="text-align:right">Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  ${rows || '<tr><td colspan="6" class="mh-admin-empty">No products found.</td></tr>'}
-                </tbody>
-              </table>
+            <div class="mh-checkout-actions">
+              <button type="button" class="mh-checkout-btn mh-checkout-btn--primary" id="mh-checkout-continue">Continue Shopping</button>
             </div>
-          </div>
-        `;
-
-        mhAdminWireNav();
-        mhAdminWireProductTable();
-
-        document.getElementById('mh-admin-new').addEventListener('click', () => mhAdminOpenModal());
-        const searchInput = document.getElementById('mh-admin-search');
-        searchInput.addEventListener('input', () => {
-          const q = searchInput.value.trim().toLowerCase();
-          const filtered = mhAdminProductsCache.filter(
-            (p) =>
-              !q ||
-              p.name.toLowerCase().includes(q) ||
-              p.sku.toLowerCase().includes(q) ||
-              (p.description || '').toLowerCase().includes(q)
-          );
-          mhRenderAdminProducts(filtered, stats);
-          document.getElementById('mh-admin-search').value = q;
-        });
+            <p class="mh-checkout-note">Order #${order.id} · ${escapeHtml(order.status)}</p>
+          </div>`;
+        mhCheckoutContinue();
       };
 
-      const mhRenderAdminOrders = (orders) => {
-        const rows = orders
-          .map(
-            (o) => `
-              <tr data-id="${o.id}">
-                <td class="mh-admin-cell-sku">#${o.id}</td>
-                <td>${o.status === 'paid' ? mhAdminStatusBadge(true) : mhAdminStatusBadge(false)}</td>
-                <td class="mh-admin-cell-sku">${escapeHtml(o.payment_status)}</td>
-                <td>${o.items.length}</td>
-                <td>$${Number(o.total).toFixed(2)}</td>
-                <td class="mh-admin-cell-sku">${new Date(o.created_at).toLocaleDateString()}</td>
-              </tr>
-            `
-          )
-          .join('');
-
-        mhAdminEl.innerHTML = `
-          <div class="mh-admin-topbar">
-            <a class="mh-admin-brand" href="/">Maison Hygia</a>
-            <nav class="mh-admin-nav">
-              <button type="button" class="mh-admin-nav-link" data-view="products">Products</button>
-              <button type="button" class="mh-admin-nav-link is-active" data-view="orders">Orders</button>
-            </nav>
-          </div>
-          <div class="mh-admin-main">
-            <div class="mh-admin-head">
-              <h1 class="mh-admin-title">Orders</h1>
+      const mhRenderCheckoutCancel = () => {
+        mhCheckoutEl.innerHTML = `
+          <div class="mh-checkout-inner">
+            <span class="mh-checkout-badge">Checkout cancelled</span>
+            <h1 class="mh-checkout-title">Your checkout was cancelled.</h1>
+            <p class="mh-checkout-subtitle">No charges were made. Your bag is still saved — come back any time to finish your ritual.</p>
+            <div class="mh-checkout-actions">
+              <button type="button" class="mh-checkout-btn mh-checkout-btn--primary" id="mh-checkout-continue">Continue Shopping</button>
             </div>
-            <div class="mh-admin-table-wrap">
-              <table class="mh-admin-table">
-                <thead>
-                  <tr>
-                    <th>Order</th>
-                    <th>Status</th>
-                    <th>Payment</th>
-                    <th>Items</th>
-                    <th>Total</th>
-                    <th>Created</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  ${rows || '<tr><td colspan="6" class="mh-admin-empty">No orders yet.</td></tr>'}
-                </tbody>
-              </table>
+          </div>`;
+        mhCheckoutContinue();
+      };
+
+      const mhRenderCheckoutError = (message) => {
+        mhCheckoutEl.innerHTML = `
+          <div class="mh-checkout-inner">
+            <span class="mh-checkout-badge">Order confirmation</span>
+            <h1 class="mh-checkout-title">We couldn't confirm your order.</h1>
+            <p class="mh-checkout-subtitle">Please try again in a moment.</p>
+            <div class="mh-checkout-error">${escapeHtml(message)}</div>
+            <div class="mh-checkout-actions">
+              <button type="button" class="mh-checkout-btn mh-checkout-btn--primary" id="mh-checkout-continue">Continue Shopping</button>
             </div>
-          </div>
-        `;
-        mhAdminWireNav();
+          </div>`;
+        mhCheckoutContinue();
       };
 
-      const mhAdminWireNav = () => {
-        mhAdminEl.querySelectorAll('.mh-admin-nav-link').forEach((btn) => {
-          btn.addEventListener('click', () => {
-            mhAdminCurrentView = btn.dataset.view;
-            mhAdminLoadView();
-          });
-        });
-      };
-
-      const mhAdminWireProductTable = () => {
-        mhAdminEl.querySelectorAll('tr[data-id]').forEach((row) => {
-          row.querySelectorAll('[data-action]').forEach((btn) => {
-            btn.addEventListener('click', (e) => {
-              e.stopPropagation();
-              const id = Number(row.dataset.id);
-              const product = mhAdminProductsCache.find((p) => p.id === id);
-              if (!product) return;
-              if (btn.dataset.action === 'edit') mhAdminOpenModal(product);
-              if (btn.dataset.action === 'delete') mhAdminOpenDeleteModal(product);
-            });
-          });
-        });
-      };
-
-      const mhAdminLoadView = async () => {
-        mhAdminEl.classList.remove('hidden');
-        mhRenderAdminLoading();
-        if (mhAdminCurrentView === 'orders') {
-          try {
-            const res = await mhAdminFetch('/orders?limit=100');
-            if (!res.ok) return mhHandleAdminError(res);
-            const data = await res.json();
-            mhRenderAdminOrders(data.items || []);
-          } catch (err) {
-            mhAdminEl.innerHTML = '<div class="mh-admin-main"><div class="mh-admin-empty">Error loading orders.</div></div>';
-          }
+      let mhCheckoutActive = false;
+      const mhCheckoutCheckRoute = async () => {
+        const path = window.location.pathname;
+        const isCheckout = path === '/checkout/success' || path === '/checkout/cancel';
+        if (isCheckout === mhCheckoutActive) return;
+        mhCheckoutActive = isCheckout;
+        if (!isCheckout) {
+          document.body.style.overflow = '';
+          mhCheckoutEl.classList.add('hidden');
           return;
         }
+        document.body.style.overflow = 'hidden';
+        mhCheckoutEl.classList.remove('hidden');
+
+        if (path === '/checkout/cancel') {
+          mhRenderCheckoutCancel();
+          return;
+        }
+
+        const sessionId = new URLSearchParams(window.location.search).get('session_id');
+        if (!sessionId) {
+          mhRenderCheckoutError('The confirmation link is missing an order reference.');
+          return;
+        }
+
+        mhCheckoutEl.innerHTML = `<div class="mh-checkout-inner"><div class="mh-checkout-loading">Confirming your order…</div></div>`;
         try {
-          const [productsRes, statsRes] = await Promise.all([
-            mhAdminFetch('/products?limit=100'),
-            mhAdminFetch('/stats'),
-          ]);
-          if (!productsRes.ok || !statsRes.ok) return mhHandleAdminError(productsRes);
-          const products = await productsRes.json();
-          const stats = await statsRes.json();
-          mhAdminProductsCache = products.items || [];
-          mhRenderAdminProducts(mhAdminProductsCache, stats);
+          const resp = await fetch(`/api/v1/orders/confirm?session_id=${encodeURIComponent(sessionId)}`);
+          if (!resp.ok) throw new Error('Order not found');
+          const order = await resp.json();
+          mhRenderCheckoutSuccess(order);
         } catch (err) {
-          mhAdminEl.innerHTML = '<div class="mh-admin-main"><div class="mh-admin-empty">Error loading products.</div></div>';
+          mhRenderCheckoutError(err.message);
         }
       };
-
-      const mhHandleAdminError = async (res) => {
-        if (res.status === 401 || res.status === 403) {
-          mhRenderAdminAuthRequired(mhAdminAuthState().email);
-        } else {
-          let detail = 'Admin API error';
-          try {
-            const body = await res.json();
-            detail = body.detail || detail;
-          } catch (err) {
-            /* ignore */
-          }
-          mhToast(detail, 'error');
-          mhRenderAdminProducts(mhAdminProductsCache, null);
-        }
-      };
-
-      const mhAdminOpenModal = (product = null) => {
-        const isEdit = Boolean(product);
-        document.getElementById('mh-admin-modal-title').textContent = isEdit ? 'Edit Product' : 'Create Product';
-        document.getElementById('mh-admin-form-id').value = product ? product.id : '';
-        document.getElementById('mh-admin-name').value = product ? product.name : '';
-        document.getElementById('mh-admin-sku').value = product ? product.sku : '';
-        document.getElementById('mh-admin-slug').value = product ? product.slug : '';
-        document.getElementById('mh-admin-description').value = product ? product.description || '' : '';
-
-        const imagePreview = document.getElementById('mh-admin-image-preview');
-        const imageCurrent = document.getElementById('mh-admin-image-current');
-        const imageInput = document.getElementById('mh-admin-image-input');
-        imageInput.value = '';
-        if (product) {
-          imageCurrent.classList.remove('hidden');
-          imageCurrent.src = mhAdminProductImage(product);
-          imagePreview.classList.add('hidden');
-        } else {
-          imageCurrent.classList.add('hidden');
-          imagePreview.classList.remove('hidden');
-        }
-        document.querySelectorAll('.mh-admin-error').forEach((el) => el.classList.add('hidden'));
-
-        // Variants list
-        const variantsList = document.getElementById('mh-admin-variants-list');
-        variantsList.innerHTML = '';
-        const seed = product && product.variants.length ? product.variants : [null];
-        seed.forEach((v) => mhAdminAddVariantRow(v));
-
-        document.getElementById('mh-admin-modal-overlay').classList.remove('hidden');
-        document.getElementById('mh-admin-modal').classList.remove('hidden');
-      };
-
-      const mhAdminAddVariantRow = (v = null) => {
-        const list = document.getElementById('mh-admin-variants-list');
-        const row = document.createElement('div');
-        row.className = 'mh-admin-variant-row';
-        row.innerHTML = `
-          <div class="mh-admin-form-field">
-            <label class="mh-admin-label">Name</label>
-            <input type="text" class="mh-admin-input mh-admin-variant-name" value="${escapeHtml(v ? v.name || '' : '')}" placeholder="Standard" />
-          </div>
-          <div class="mh-admin-form-field">
-            <label class="mh-admin-label">SKU</label>
-            <input type="text" class="mh-admin-input mh-admin-variant-sku" value="${escapeHtml(v ? v.sku || '' : '')}" placeholder="MH-000-S" />
-          </div>
-          <div class="mh-admin-form-field">
-            <label class="mh-admin-label">Price</label>
-            <input type="number" step="0.01" min="0" class="mh-admin-input mh-admin-variant-price" value="${v ? v.price : ''}" placeholder="0.00" />
-          </div>
-          <div class="mh-admin-form-field">
-            <label class="mh-admin-label">Compare at</label>
-            <input type="number" step="0.01" min="0" class="mh-admin-input mh-admin-variant-compare" value="${v && v.compare_at_price ? v.compare_at_price : ''}" placeholder="0.00" />
-          </div>
-          <div class="mh-admin-form-field">
-            <label class="mh-admin-label">Stock</label>
-            <input type="number" step="1" min="0" class="mh-admin-input mh-admin-variant-stock" value="${v ? v.inventory_quantity : 0}" placeholder="0" />
-          </div>
-          <button type="button" class="mh-admin-variant-remove" aria-label="Remove variant">×</button>
-        `;
-        row.querySelector('.mh-admin-variant-remove').addEventListener('click', () => row.remove());
-        list.appendChild(row);
-      };
-
-      const mhAdminCloseModal = () => {
-        document.getElementById('mh-admin-modal-overlay').classList.add('hidden');
-        document.getElementById('mh-admin-modal').classList.add('hidden');
-      };
-
-      const mhAdminOpenDeleteModal = (product) => {
-        document.getElementById('mh-admin-delete-message').textContent = `Are you sure you want to delete "${product.name}"? This action cannot be undone.`;
-        document.getElementById('mh-admin-delete-confirm').dataset.id = String(product.id);
-        document.getElementById('mh-admin-delete-overlay').classList.remove('hidden');
-        document.getElementById('mh-admin-delete-modal').classList.remove('hidden');
-      };
-
-      const mhAdminCloseDeleteModal = () => {
-        document.getElementById('mh-admin-delete-overlay').classList.add('hidden');
-        document.getElementById('mh-admin-delete-modal').classList.add('hidden');
-      };
-
-      const mhAdminCollectVariants = () => {
-        return Array.from(document.querySelectorAll('#mh-admin-variants-list .mh-admin-variant-row'))
-          .map((row) => {
-            const sku = row.querySelector('.mh-admin-variant-sku').value.trim();
-            const name = row.querySelector('.mh-admin-variant-name').value.trim();
-            const price = row.querySelector('.mh-admin-variant-price').value;
-            const compare = row.querySelector('.mh-admin-variant-compare').value;
-            const stock = row.querySelector('.mh-admin-variant-stock').value;
-            const v = { sku, name, is_active: true };
-            if (price !== '' && !isNaN(Number(price))) v.price = price;
-            if (compare !== '' && !isNaN(Number(compare))) v.compare_at_price = compare;
-            if (stock !== '' && !isNaN(Number(stock))) v.inventory_quantity = Number(stock);
-            return v;
-          })
-          .filter((v) => v.sku || v.name);
-      };
-
-      const mhAdminSetSubmitting = (form, submitting) => {
-        const btn = form.querySelector('#mh-admin-submit');
-        const spinner = btn.querySelector('.mh-admin-spinner');
-        const text = btn.querySelector('.mh-admin-btn-text');
-        if (submitting) {
-          btn.disabled = true;
-          spinner.classList.remove('hidden');
-          text.textContent = 'Saving...';
-        } else {
-          btn.disabled = false;
-          spinner.classList.add('hidden');
-          text.textContent = 'Save Product';
-        }
-      };
-
-      const mhAdminHandleSave = async (e) => {
-        e.preventDefault();
-        const form = e.target;
-        const id = form.querySelector('#mh-admin-form-id').value;
-        const name = form.querySelector('#mh-admin-name').value.trim();
-        const sku = form.querySelector('#mh-admin-sku').value.trim();
-        const slug = form.querySelector('#mh-admin-slug').value.trim();
-        const description = form.querySelector('#mh-admin-description').value.trim();
-        const imageInput = form.querySelector('#mh-admin-image-input');
-
-        const showError = (field, message) => {
-          const el = document.getElementById(`mh-admin-${field}-error`);
-          if (el) {
-            el.textContent = message;
-            el.classList.remove('hidden');
-          }
-        };
-        document.querySelectorAll('.mh-admin-error').forEach((el) => el.classList.add('hidden'));
-
-        if (!name) return showError('name', 'Product name is required.');
-        if (!sku) return showError('sku', 'SKU is required.');
-        if (!slug) return showError('slug', 'Slug is required.');
-
-        const variants = mhAdminCollectVariants();
-        const formData = new FormData();
-        formData.append('name', name);
-        formData.append('sku', sku);
-        formData.append('slug', slug);
-        formData.append('is_active', 'true');
-        if (description) formData.append('description', description);
-        formData.append('variants', JSON.stringify(variants));
-        if (imageInput.files && imageInput.files[0]) formData.append('image', imageInput.files[0]);
-
-        mhAdminSetSubmitting(form, true);
-        try {
-          const res = await mhAdminFetch(id ? `/products/${id}` : '/products', {
-            method: id ? 'PUT' : 'POST',
-            body: formData,
-          });
-          if (!res.ok) {
-            let detail = 'Failed to save product.';
-            try {
-              const body = await res.json();
-              detail = body.detail || detail;
-            } catch (err) {
-              /* ignore */
-            }
-            throw new Error(detail);
-          }
-          mhAdminCloseModal();
-          mhToast(id ? 'Product updated.' : 'Product created.', 'success');
-          await mhAdminLoadView();
-        } catch (err) {
-          mhToast(err.message, 'error');
-          mhAdminSetSubmitting(form, false);
-        }
-      };
-
-      const mhAdminHandleDelete = async () => {
-        const confirmBtn = document.getElementById('mh-admin-delete-confirm');
-        const id = confirmBtn.dataset.id;
-        const spinner = confirmBtn.querySelector('.mh-admin-spinner');
-        const text = confirmBtn.querySelector('.mh-admin-btn-text');
-        confirmBtn.disabled = true;
-        spinner.classList.remove('hidden');
-        text.textContent = 'Deleting...';
-        try {
-          const res = await mhAdminFetch(`/products/${id}`, { method: 'DELETE' });
-          if (!res.ok) {
-            let detail = 'Failed to delete product.';
-            try {
-              const body = await res.json();
-              detail = body.detail || detail;
-            } catch (err) {
-              /* ignore */
-            }
-            throw new Error(detail);
-          }
-          mhAdminCloseDeleteModal();
-          mhToast('Product deleted.', 'success');
-          await mhAdminLoadView();
-        } catch (err) {
-          mhToast(err.message, 'error');
-          confirmBtn.disabled = false;
-          spinner.classList.add('hidden');
-          text.textContent = 'Delete';
-        }
-      };
-
-      // Modal wiring
-      document.getElementById('mh-admin-modal-close').addEventListener('click', mhAdminCloseModal);
-      document.getElementById('mh-admin-modal-overlay').addEventListener('click', mhAdminCloseModal);
-      document.getElementById('mh-admin-cancel').addEventListener('click', mhAdminCloseModal);
-      document.getElementById('mh-admin-form').addEventListener('submit', mhAdminHandleSave);
-      document.getElementById('mh-admin-add-variant').addEventListener('click', () => mhAdminAddVariantRow());
-      document.getElementById('mh-admin-image-upload').addEventListener('click', () => {
-        document.getElementById('mh-admin-image-input').click();
-      });
-      document.getElementById('mh-admin-image-input').addEventListener('change', (e) => {
-        const file = e.target.files && e.target.files[0];
-        if (!file) return;
-        const reader = new FileReader();
-        reader.onload = () => {
-          document.getElementById('mh-admin-image-preview').classList.add('hidden');
-          const current = document.getElementById('mh-admin-image-current');
-          current.classList.remove('hidden');
-          current.src = reader.result;
-        };
-        reader.readAsDataURL(file);
-      });
-
-      document.getElementById('mh-admin-delete-close').addEventListener('click', mhAdminCloseDeleteModal);
-      document.getElementById('mh-admin-delete-overlay').addEventListener('click', mhAdminCloseDeleteModal);
-      document.getElementById('mh-admin-delete-cancel').addEventListener('click', mhAdminCloseDeleteModal);
-      document.getElementById('mh-admin-delete-confirm').addEventListener('click', mhAdminHandleDelete);
-
-      // Route detection: the SPA navigates via history API, so poll the path.
-      const mhAdminCheckRoute = () => {
-        const active = window.location.pathname === '/admin-products';
-        if (active === mhAdminActive) return;
-        mhAdminActive = active;
-        if (active) {
-          document.body.style.overflow = 'hidden';
-          mhAdminLoadView();
-        } else {
-          document.body.style.overflow = '';
-          mhAdminEl.classList.add('hidden');
-          mhAdminCloseModal();
-          mhAdminCloseDeleteModal();
-        }
-      };
-      setInterval(mhAdminCheckRoute, 300);
-      mhAdminCheckRoute();
+      setInterval(mhCheckoutCheckRoute, 300);
+      mhCheckoutCheckRoute();
     </script>
   </body>
 </html>

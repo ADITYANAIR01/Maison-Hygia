@@ -5,7 +5,8 @@
 import store from '../../store.js';
 import api from '../../api.js';
 import { Chart } from '../../components/Chart.js';
-import { formatCurrency, formatNumber, formatPercent, formatRelativeTime, getStatusConfig } from '../../utils/formatters.js';
+import { Table } from '../../components/Table.js';
+import { formatCurrency, formatNumber, formatPercent, formatRelativeTime, getStatusConfig, formatOrderId } from '../../utils/formatters.js';
 import { debounce } from '../../utils/helpers.js';
 
 export class DashboardPage {
@@ -91,83 +92,83 @@ export class DashboardPage {
   }
   
   async loadData() {
-    // Load mock data for now
-    this.renderKPIs(this.getMockKPIs());
-    this.renderRevenueChart(this.getMockRevenueData());
-    this.renderRecentOrders(this.getMockRecentOrders());
-    this.renderQuickActions();
-    
-    // Try to load real data if API is available
-    this.loadRealData();
-  }
-  
-  async loadRealData() {
     try {
       const [kpisResponse, revenueResponse, ordersResponse] = await Promise.allSettled([
         api.get('/dashboard/kpis'),
         api.get('/dashboard/revenue?days=30'),
-        api.get('/orders?limit=5&sort=created_at&order=desc')
+        api.get('/orders?limit=5')
       ]);
       
       if (kpisResponse.status === 'fulfilled' && kpisResponse.value.ok) {
         const kpis = await kpisResponse.value.json();
-        this.renderKPIs(kpis);
+        this.renderKPIs(this.mapKPIs(kpis));
+      } else {
+        this.renderKPIs(this.getEmptyKPIs());
       }
       
       if (revenueResponse.status === 'fulfilled' && revenueResponse.value.ok) {
         const revenue = await revenueResponse.value.json();
-        this.renderRevenueChart(revenue);
+        this.renderRevenueChart(this.mapRevenue(revenue));
+      } else {
+        this.renderRevenueChart({ labels: [], values: [] });
       }
       
       if (ordersResponse.status === 'fulfilled' && ordersResponse.value.ok) {
         const orders = await ordersResponse.value.json();
-        this.renderRecentOrders(orders.data || orders);
+        this.renderRecentOrders((orders.data || []).map(order => this.mapOrder(order)));
+      } else {
+        this.renderRecentOrders([]);
       }
+      
+      this.renderQuickActions();
     } catch (err) {
-      console.log('Using mock data - API not available:', err.message);
+      console.error('Failed to load dashboard data:', err.message);
+      this.renderKPIs(this.getEmptyKPIs());
+      this.renderRevenueChart({ labels: [], values: [] });
+      this.renderRecentOrders([]);
+      this.renderQuickActions();
     }
   }
   
-  getMockKPIs() {
+  mapKPIs(kpis) {
+    const orders = kpis.orders || 0;
+    const paidOrders = kpis.paid_orders || 0;
     return {
-      revenue: { value: 125430.50, trend: 12.5, trendLabel: 'vs last 30 days' },
-      orders: { value: 1234, trend: 8.2, trendLabel: 'vs last 30 days' },
-      users: { value: 5678, trend: 15.3, trendLabel: 'vs last 30 days' },
-      conversion: { value: 3.24, trend: -2.1, trendLabel: 'vs last 30 days' }
+      revenue: { value: kpis.revenue || 0, trend: 0, trendLabel: 'total paid revenue' },
+      orders: { value: orders, trend: 0, trendLabel: 'total orders' },
+      users: { value: kpis.customers || 0, trend: 0, trendLabel: 'unique customers' },
+      conversion: { value: orders > 0 ? paidOrders / orders : 0, trend: 0, trendLabel: 'paid conversion rate' }
     };
   }
   
-  getMockRevenueData() {
+  getEmptyKPIs() {
+    return {
+      revenue: { value: 0, trend: 0, trendLabel: 'total paid revenue' },
+      orders: { value: 0, trend: 0, trendLabel: 'total orders' },
+      users: { value: 0, trend: 0, trendLabel: 'unique customers' },
+      conversion: { value: 0, trend: 0, trendLabel: 'paid conversion rate' }
+    };
+  }
+  
+  mapRevenue(rows) {
     const labels = [];
     const values = [];
-    const now = new Date();
-    
-    for (let i = 29; i >= 0; i--) {
-      const date = new Date(now);
-      date.setDate(date.getDate() - i);
-      labels.push(date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }));
-      
-      // Generate realistic revenue data
-      const base = 3000 + Math.random() * 2000;
-      const weekendBoost = (date.getDay() === 0 || date.getDay() === 6) ? 1.3 : 1;
-      values.push(Math.round(base * weekendBoost * (0.8 + Math.random() * 0.4)));
-    }
-    
+    (rows || []).forEach(row => {
+      labels.push(new Date(row.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }));
+      values.push(Math.round(row.revenue));
+    });
     return { labels, values };
   }
   
-  getMockRecentOrders() {
-    const statuses = ['paid', 'shipped', 'delivered', 'pending', 'cancelled'];
-    const customers = ['Sarah Johnson', 'Michael Chen', 'Emily Davis', 'James Wilson', 'Lisa Anderson'];
-    
-    return Array.from({ length: 5 }, (_, i) => ({
-      id: 1000 + i,
-      customer: customers[i],
-      email: customers[i].toLowerCase().replace(' ', '.') + '@example.com',
-      total: (Math.random() * 200 + 50).toFixed(2),
-      status: statuses[Math.floor(Math.random() * statuses.length)],
-      createdAt: new Date(Date.now() - i * 3600000 * Math.random() * 24).toISOString()
-    }));
+  mapOrder(order) {
+    return {
+      id: order.id,
+      customer: order.customer,
+      email: order.email,
+      total: order.total,
+      status: order.status,
+      createdAt: order.created_at
+    };
   }
   
   renderKPIs(kpis) {
@@ -245,9 +246,7 @@ export class DashboardPage {
       { label: 'Create Product', icon: 'plus', route: '#products', primary: true },
       { label: 'View Orders', icon: 'shopping-bag', route: '#orders' },
       { label: 'Manage Inventory', icon: 'package', route: '#inventory' },
-      { label: 'Add User', icon: 'user-plus', route: '#users' },
-      { label: 'Site Settings', icon: 'settings', route: '#settings' },
-      { label: 'Email Templates', icon: 'mail', route: '#settings?tab=email' }
+      { label: 'Add User', icon: 'user-plus', route: '#users' }
     ];
     
     this.quickActionsContainer.innerHTML = actions.map(action => `
@@ -274,8 +273,5 @@ export class DashboardPage {
     }
   }
 }
-
-// Import formatOrderId
-import { formatOrderId } from '../../utils/formatters.js';
 
 export default DashboardPage;

@@ -191,8 +191,11 @@ class ApiClient {
   }
 }
 
-// Create singleton with admin API base URL
-const api = new ApiClient('https://api.maisonhygia.adityanair.tech/api/v1/admin');
+// Create singleton with admin API base URL (overridable via meta tag)
+const defaultBaseUrl = 'https://api.maisonhygia.adityanair.tech/api/v1/admin';
+const api = new ApiClient(
+  document.querySelector('meta[name="api-base-url"]')?.content || defaultBaseUrl
+);
 
 // Add default request interceptor for logging
 api.addRequestInterceptor((headers) => {

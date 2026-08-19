@@ -2,6 +2,8 @@
 
 Environment is configured *before* any backend import so that
 ``backend.database`` binds to a throwaway SQLite file, never the dev DB.
+Set ``TEST_DATABASE_URL`` to run the suite against another database
+(e.g. a real PostgreSQL instance).
 """
 
 import os
@@ -9,8 +11,12 @@ import sys
 import tempfile
 from pathlib import Path
 
-_TMP_DIR = Path(tempfile.mkdtemp(prefix="mh_tests_"))
-os.environ["DATABASE_URL"] = f"sqlite:///{_TMP_DIR / 'test.db'}"
+_TEST_DATABASE_URL = os.environ.get("TEST_DATABASE_URL")
+if _TEST_DATABASE_URL:
+    os.environ["DATABASE_URL"] = _TEST_DATABASE_URL
+else:
+    _TMP_DIR = Path(tempfile.mkdtemp(prefix="mh_tests_"))
+    os.environ["DATABASE_URL"] = f"sqlite:///{_TMP_DIR / 'test.db'}"
 os.environ["STRIPE_SECRET_KEY"] = "sk_test_test"
 os.environ["STRIPE_WEBHOOK_SECRET"] = "whsec_test"
 os.environ["FRONTEND_URL"] = "http://localhost:8000"

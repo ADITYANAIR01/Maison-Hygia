@@ -78,33 +78,20 @@ export class UsersPage {
       
       if (response.ok) {
         const data = await response.json();
-        this.users = data.data || data;
+        this.users = data.data || [];
         this.totalItems = data.total || this.users.length;
         this.renderTable();
         return;
       }
+      throw new Error(`HTTP ${response.status}`);
     } catch (err) {
-      console.log('Using mock data - API not available');
+      console.error('Failed to load users:', err.message);
+      toast.error('Failed to load users');
     }
     
-    this.users = this.getMockUsers();
-    this.totalItems = this.users.length;
+    this.users = [];
+    this.totalItems = 0;
     this.renderTable();
-  }
-  
-  getMockUsers() {
-    return [
-      { id: 1, email: 'admin@maisonhygia.com', name: 'Admin User', role: 'admin', orders_count: 0, total_spent: 0, is_active: true, created_at: '2024-01-01T10:00:00Z' },
-      { id: 2, email: 'editor@maisonhygia.com', name: 'Content Editor', role: 'editor', orders_count: 0, total_spent: 0, is_active: true, created_at: '2024-01-15T10:00:00Z' },
-      { id: 3, email: 'sarah.j@example.com', name: 'Sarah Johnson', role: 'customer', orders_count: 5, total_spent: 245.50, is_active: true, created_at: '2024-02-01T10:00:00Z' },
-      { id: 4, email: 'mchen@example.com', name: 'Michael Chen', role: 'customer', orders_count: 3, total_spent: 156.00, is_active: true, created_at: '2024-02-10T10:00:00Z' },
-      { id: 5, email: 'emily.d@example.com', name: 'Emily Davis', role: 'customer', orders_count: 8, total_spent: 432.80, is_active: true, created_at: '2024-02-20T10:00:00Z' },
-      { id: 6, email: 'jwilson@example.com', name: 'James Wilson', role: 'customer', orders_count: 2, total_spent: 89.00, is_active: true, created_at: '2024-03-01T10:00:00Z' },
-      { id: 7, email: 'landerson@example.com', name: 'Lisa Anderson', role: 'customer', orders_count: 1, total_spent: 48.00, is_active: true, created_at: '2024-03-10T10:00:00Z' },
-      { id: 8, email: 'rbrown@example.com', name: 'Robert Brown', role: 'customer', orders_count: 4, total_spent: 198.50, is_active: false, created_at: '2024-03-15T10:00:00Z' },
-      { id: 9, email: 'jlee@example.com', name: 'Jennifer Lee', role: 'customer', orders_count: 6, total_spent: 312.00, is_active: true, created_at: '2024-04-01T10:00:00Z' },
-      { id: 10, email: 'dkim@example.com', name: 'David Kim', role: 'customer', orders_count: 0, total_spent: 0, is_active: true, created_at: '2024-04-10T10:00:00Z' }
-    ];
   }
   
   renderTable() {
@@ -169,7 +156,7 @@ export class UsersPage {
     // Bind status toggles
     this.tableContainer.querySelectorAll('.status-toggle').forEach(toggle => {
       toggle.addEventListener('change', (e) => {
-        const id = parseInt(e.target.dataset.id);
+        const id = e.target.dataset.id;
         this.toggleUserStatus(id, e.target.checked);
       });
     });
@@ -178,7 +165,7 @@ export class UsersPage {
     this.tableContainer.querySelectorAll('.role-btn').forEach(btn => {
       btn.addEventListener('click', (e) => {
         e.stopPropagation();
-        const id = parseInt(btn.dataset.id);
+        const id = btn.dataset.id;
         const user = this.users.find(u => u.id === id);
         if (user) this.openRoleModal(user);
       });
@@ -190,8 +177,7 @@ export class UsersPage {
     if (!user) return;
     
     try {
-      // In production, call Cognito AdminEnableUser/AdminDisableUser
-      await api.put(`/users/${id}`, { ...user, is_active: isActive });
+      await api.put(`/users/${id}`, { enabled: isActive });
       user.is_active = isActive;
       toast.success(`User ${isActive ? 'enabled' : 'disabled'}`);
     } catch (err) {

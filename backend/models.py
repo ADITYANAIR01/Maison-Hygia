@@ -11,29 +11,10 @@ from sqlalchemy import (
     String,
     Table,
     Text,
-    UniqueConstraint,
 )
 from sqlalchemy.orm import relationship
 
 from .database import Base
-
-# ---------- User Roles (for admin auth) ----------
-
-
-class UserRole(Base):
-    __tablename__ = "user_roles"
-
-    id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(
-        String, index=True, nullable=False
-    )  # Supabase user ID (UUID string)
-    role = Column(String, nullable=False)  # 'admin', 'editor', 'viewer'
-    created_at = Column(
-        DateTime, default=lambda: datetime.now(timezone.utc), nullable=False
-    )
-
-    __table_args__ = (UniqueConstraint("user_id", "role", name="uq_user_role"),)
-
 
 # ---------- Tags ----------
 
@@ -201,3 +182,52 @@ class CartItem(Base):
     # Relations
     cart = relationship("Cart", back_populates="items")
     variant = relationship("Variant")
+
+
+# ---------- Order ----------
+
+
+class Order(Base):
+    __tablename__ = "orders"
+
+    id = Column(Integer, primary_key=True, index=True)
+    cart_id = Column(Integer, ForeignKey("carts.id"), nullable=True)
+    session_id = Column(String, index=True, nullable=False)
+    customer_email = Column(String, index=True, nullable=True)
+    customer_name = Column(String, nullable=True)
+    shipping_address = Column(JSON, nullable=True)
+    total = Column(Numeric(12, 2), nullable=False)
+    currency = Column(String, nullable=False, default="usd")
+    status = Column(
+        String, nullable=False, default="pending"
+    )  # pending|paid|fulfilled|cancelled|refunded
+    payment_status = Column(String, nullable=False, default="unpaid")
+    stripe_session_id = Column(String, unique=True, index=True, nullable=False)
+    created_at = Column(
+        DateTime, default=lambda: datetime.now(timezone.utc), nullable=False
+    )
+    updated_at = Column(
+        DateTime,
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )
+
+    items = relationship(
+        "OrderItem", back_populates="order", cascade="all, delete-orphan"
+    )
+
+
+class OrderItem(Base):
+    __tablename__ = "order_items"
+
+    id = Column(Integer, primary_key=True, index=True)
+    order_id = Column(Integer, ForeignKey("orders.id"), nullable=False)
+    variant_id = Column(Integer, ForeignKey("variants.id"), nullable=True)
+    sku_snapshot = Column(String, nullable=False)
+    name_snapshot = Column(String, nullable=False)
+    price_snapshot = Column(Numeric(12, 2), nullable=False)
+    quantity = Column(Integer, nullable=False, default=1)
+
+    # Relations
+    order = relationship("Order", back_populates="items")

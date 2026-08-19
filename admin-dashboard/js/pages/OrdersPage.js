@@ -46,8 +46,7 @@ export class OrdersPage {
               <option value="all">All Status</option>
               <option value="pending">Pending</option>
               <option value="paid">Paid</option>
-              <option value="shipped">Shipped</option>
-              <option value="delivered">Delivered</option>
+              <option value="fulfilled">Fulfilled</option>
               <option value="cancelled">Cancelled</option>
               <option value="refunded">Refunded</option>
             </select>
@@ -120,120 +119,77 @@ export class OrdersPage {
       
       if (response.ok) {
         const data = await response.json();
-        this.orders = data.data || data;
+        this.orders = (data.data || []).map(order => this.normalizeOrder(order));
         this.totalItems = data.total || this.orders.length;
         this.renderTable();
         return;
       }
+      throw new Error(`HTTP ${response.status}`);
     } catch (err) {
-      console.log('Using mock data - API not available');
+      console.error('Failed to load orders:', err.message);
+      toast.error('Failed to load orders');
     }
     
-    this.orders = this.getMockOrders();
-    this.totalItems = this.orders.length;
+    this.orders = [];
+    this.totalItems = 0;
     this.renderTable();
   }
   
-  getMockOrders() {
-    const statuses = ['pending', 'paid', 'shipped', 'delivered', 'cancelled', 'refunded'];
-    const customers = [
-      { name: 'Sarah Johnson', email: 'sarah.j@example.com' },
-      { name: 'Michael Chen', email: 'mchen@example.com' },
-      { name: 'Emily Davis', email: 'emily.d@example.com' },
-      { name: 'James Wilson', email: 'jwilson@example.com' },
-      { name: 'Lisa Anderson', email: 'landerson@example.com' },
-      { name: 'Robert Brown', email: 'rbrown@example.com' },
-      { name: 'Jennifer Lee', email: 'jlee@example.com' },
-      { name: 'David Kim', email: 'dkim@example.com' },
-      { name: 'Amanda Taylor', email: 'ataylor@example.com' },
-      { name: 'Christopher Garcia', email: 'cgarcia@example.com' },
-      { name: 'Michelle Rodriguez', email: 'mrodriguez@example.com' },
-      { name: 'Daniel Martinez', email: 'dmartinez@example.com' },
-      { name: 'Ashley Thompson', email: 'athompson@example.com' },
-      { name: 'Matthew White', email: 'mwhite@example.com' },
-      { name: 'Stephanie Harris', email: 'sharris@example.com' }
-    ];
+  normalizeOrder(order) {
+    const items = (order.items || []).map(item => ({
+      name: item.name,
+      variant: item.sku,
+      qty: item.quantity,
+      price: parseFloat(item.price),
+      lineTotal: parseFloat(item.line_total)
+    }));
     
-    const products = [
-      { name: 'Radiant Face Oil', variant: '30ml', price: 48.00 },
-      { name: 'Herbal Hair Mask', variant: '100g', price: 36.00 },
-      { name: 'Soothing Body Butter', variant: '200ml', price: 42.00 },
-      { name: 'Cleansing Face Wash', variant: '150ml', price: 28.00 },
-      { name: 'Ayurvedic Lip Balm', variant: '10g', price: 18.00 }
-    ];
-    
-    return Array.from({ length: 25 }, (_, i) => {
-      const customer = customers[Math.floor(Math.random() * customers.length)];
-      const itemCount = Math.floor(Math.random() * 3) + 1;
-      const items = [];
-      let total = 0;
-      
-      for (let j = 0; j < itemCount; j++) {
-        const product = products[Math.floor(Math.random() * products.length)];
-        const qty = Math.floor(Math.random() * 3) + 1;
-        const lineTotal = product.price * qty;
-        items.push({ ...product, qty, lineTotal });
-        total += lineTotal;
-      }
-      
-      const status = statuses[Math.floor(Math.random() * statuses.length)];
-      const daysAgo = Math.floor(Math.random() * 30);
-      const createdAt = new Date(Date.now() - daysAgo * 86400000 - Math.random() * 86400000);
-      
-      return {
-        id: 10000 + i,
-        customer: customer.name,
-        email: customer.email,
-        total: total.toFixed(2),
-        status,
-        items,
-        createdAt: createdAt.toISOString(),
-        timeline: this.generateTimeline(status, createdAt)
-      };
-    }).sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+    return {
+      id: order.id,
+      customer: order.customer,
+      email: order.email,
+      total: order.total,
+      status: order.status,
+      payment_status: order.payment_status,
+      items,
+      createdAt: order.created_at,
+      timeline: this.buildTimeline(order)
+    };
   }
   
-  generateTimeline(status, createdAt) {
+  buildTimeline(order) {
     const timeline = [
-      { label: 'Order Created', time: createdAt, status: 'completed' }
+      { label: 'Order Created', time: order.created_at, status: 'completed' }
     ];
     
-    const statuses = ['pending', 'paid', 'shipped', 'delivered'];
-    const statusIndex = statuses.indexOf(status);
-    
-    if (statusIndex >= 1) {
+    if (order.payment_status === 'paid') {
       timeline.push({
         label: 'Payment Received',
-        time: new Date(createdAt.getTime() + Math.random() * 3600000),
-        status: 'completed'
-      });
-    }
-    if (statusIndex >= 2) {
-      timeline.push({
-        label: 'Order Shipped',
-        time: new Date(createdAt.getTime() + 86400000 + Math.random() * 86400000),
-        status: 'completed'
-      });
-    }
-    if (statusIndex >= 3) {
-      timeline.push({
-        label: 'Delivered',
-        time: new Date(createdAt.getTime() + 172800000 + Math.random() * 86400000),
+        time: order.updated_at || order.created_at,
         status: 'completed'
       });
     }
     
-    if (status === 'cancelled') {
+    if (order.status === 'fulfilled') {
+      timeline.push({
+        label: 'Order Fulfilled',
+        time: order.updated_at || order.created_at,
+        status: 'completed'
+      });
+    }
+    
+    if (order.status === 'cancelled') {
       timeline.push({
         label: 'Order Cancelled',
-        time: new Date(createdAt.getTime() + Math.random() * 86400000),
+        time: order.updated_at || order.created_at,
         status: 'cancelled'
       });
     }
-    if (status === 'refunded') {
+    
+    if (order.status === 'refunded') {
       timeline.push({
         label: 'Refund Processed',
-        time: new Date(createdAt.getTime() + 259200000 + Math.random() * 86400000),
+        time: order.updated_at || order.created_at,
         status: 'refunded'
       });
     }
@@ -255,7 +211,7 @@ export class OrdersPage {
       { key: 'status', label: 'Status', sortable: true, render: (row) => {
         const config = getStatusConfig(row.status);
         return `<select class="form-input form-select status-select" data-id="${row.id}" style="width: auto; padding: 2px 8px; font-size: var(--text-xs);">
-          ${['pending', 'paid', 'shipped', 'delivered', 'cancelled', 'refunded'].map(s => {
+          ${['pending', 'paid', 'fulfilled', 'cancelled', 'refunded'].map(s => {
             const c = getStatusConfig(s);
             return `<option value="${s}" ${s === row.status ? 'selected' : ''}>${c.label}</option>`;
           }).join('')}
@@ -269,7 +225,7 @@ export class OrdersPage {
               <circle cx="12" cy="12" r="3"/>
             </svg>
           </button>
-          <button class="table-action-btn delete refund-btn" data-id="${row.id}" aria-label="Refund order" ${['paid', 'shipped', 'delivered'].includes(row.status) ? '' : 'style="display:none;"'}>
+          <button class="table-action-btn delete refund-btn" data-id="${row.id}" aria-label="Refund order" ${['paid', 'fulfilled'].includes(row.status) ? '' : 'style="display:none;"'}>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/>
               <path d="M3 3v5h5"/>
@@ -328,8 +284,10 @@ export class OrdersPage {
     if (!order) return;
     
     try {
-      await api.put(`/orders/${id}`, { ...order, status });
+      await api.put(`/orders/${id}`, { status });
       order.status = status;
+      if (status === 'refunded') order.payment_status = 'refunded';
+      order.timeline = this.buildTimeline(order);
       toast.success(`Order status updated to ${status}`);
       this.renderTable(); // Re-render to update refund button visibility
     } catch (err) {
@@ -352,6 +310,8 @@ export class OrdersPage {
       const order = this.orders.find(o => o.id === id);
       if (order) {
         order.status = 'refunded';
+        order.payment_status = 'refunded';
+        order.timeline = this.buildTimeline(order);
         this.renderTable();
       }
       toast.success('Refund processed');
@@ -386,7 +346,7 @@ export class OrdersPage {
                 <span class="order-detail-meta-label">Status:</span>
                 <span class="order-detail-meta-value">
                   <select class="form-input form-select status-select" data-id="${order.id}" style="width: auto; display: inline-block; padding: 2px 8px; font-size: var(--text-sm);">
-                    ${['pending', 'paid', 'shipped', 'delivered', 'cancelled', 'refunded'].map(s => {
+                    ${['pending', 'paid', 'fulfilled', 'cancelled', 'refunded'].map(s => {
                       const c = getStatusConfig(s);
                       return `<option value="${s}" ${s === order.status ? 'selected' : ''}>${c.label}</option>`;
                     }).join('')}
@@ -461,7 +421,7 @@ export class OrdersPage {
     `);
     
     modal.setFooter(`
-      ${['paid', 'shipped', 'delivered'].includes(order.status) ? `
+      ${['paid', 'fulfilled'].includes(order.status) ? `
         <button class="btn btn-danger" data-action="refund">Process Refund</button>
       ` : ''}
       <button class="btn btn-secondary" data-action="close">Close</button>

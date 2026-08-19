@@ -1,11 +1,9 @@
-version: "3.8"
-
 services:
   backend:
     build:
       context: .
       dockerfile: Dockerfile
-    command: uvicorn backend.main:app --host 0.0.0.0 --port 8001
+    command: sh -c "alembic upgrade head && exec uvicorn backend.main:app --host 0.0.0.0 --port 8001"
     ports:
       - "8001:8001"
     environment:
@@ -13,8 +11,25 @@ services:
       - STRIPE_SECRET_KEY=${STRIPE_SECRET_KEY:-}
       - STRIPE_WEBHOOK_SECRET=${STRIPE_WEBHOOK_SECRET:-}
       - FRONTEND_URL=${FRONTEND_URL:-http://localhost:8000}
+      - COGNITO_USER_POOL_ID=${COGNITO_USER_POOL_ID:-}
+      - COGNITO_APP_CLIENT_ID=${COGNITO_APP_CLIENT_ID:-}
+      - AWS_REGION=${AWS_REGION:-us-east-1}
+      - S3_ASSETS_BUCKET=${S3_ASSETS_BUCKET:-}
+      - CF_ASSETS_DOMAIN=${CF_ASSETS_DOMAIN:-assets.maisonhygia.adityanair.tech}
+      - AUTO_CREATE_SCHEMA=${AUTO_CREATE_SCHEMA:-false}
     volumes:
       - ./backend:/app/backend
+      - ./alembic:/app/alembic
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8001/health', timeout=5).status == 200 else 1)"
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 10s
 
   frontend:
     build:
@@ -41,4 +56,5 @@ services:
     volumes:
       - ./backend:/app/backend
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy

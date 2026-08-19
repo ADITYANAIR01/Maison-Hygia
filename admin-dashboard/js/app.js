@@ -15,7 +15,6 @@ import ProductsPage from './pages/ProductsPage.js';
 import OrdersPage from './pages/OrdersPage.js';
 import UsersPage from './pages/UsersPage.js';
 import InventoryPage from './pages/InventoryPage.js';
-import SettingsPage from './pages/SettingsPage.js';
 import { Modal } from './components/Modal.js';
 import toast from './components/Toast.js';
 
@@ -89,8 +88,7 @@ function setupRoutes() {
     { path: '/products', page: 'products' },
     { path: '/orders', page: 'orders' },
     { path: '/users', page: 'users' },
-    { path: '/inventory', page: 'inventory' },
-    { path: '/settings', page: 'settings' }
+    { path: '/inventory', page: 'inventory' }
   ];
   
   protectedRoutes.forEach(({ path, page }) => {
@@ -159,8 +157,7 @@ function renderPage(pageName, params) {
       products: 'Products',
       orders: 'Orders',
       users: 'Users',
-      inventory: 'Inventory',
-      settings: 'Settings'
+      inventory: 'Inventory'
     };
     
     const breadcrumbs = getBreadcrumbs(pageName);
@@ -193,9 +190,6 @@ function renderPage(pageName, params) {
     case 'inventory':
       currentPageInstance = new InventoryPage(mainContent);
       break;
-    case 'settings':
-      currentPageInstance = new SettingsPage(mainContent);
-      break;
     default:
       renderNotFound();
       return;
@@ -208,8 +202,7 @@ function getBreadcrumbs(pageName) {
     products: [{ label: 'Dashboard', url: '#dashboard' }],
     orders: [{ label: 'Dashboard', url: '#dashboard' }],
     users: [{ label: 'Dashboard', url: '#dashboard' }],
-    inventory: [{ label: 'Dashboard', url: '#dashboard' }],
-    settings: [{ label: 'Dashboard', url: '#dashboard' }]
+    inventory: [{ label: 'Dashboard', url: '#dashboard' }]
   };
   
   return breadcrumbMap[pageName] || [];

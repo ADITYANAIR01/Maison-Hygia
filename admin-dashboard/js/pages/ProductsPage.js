@@ -6,7 +6,6 @@ import store from '../../store.js';
 import api from '../../api.js';
 import { Table } from '../../components/Table.js';
 import { Modal } from '../../components/Modal.js';
-import { Form } from '../../components/Form.js';
 import { formatCurrency, formatNumber, getStatusConfig } from '../../utils/formatters.js';
 import { validators, compose } from '../../utils/validators.js';
 import { debounce, generateId } from '../../utils/helpers.js';
@@ -97,7 +96,6 @@ export class ProductsPage {
     }
     
     try {
-      // Try API first
       const params = {
         page: this.currentPage,
         limit: this.pageSize,
@@ -112,45 +110,26 @@ export class ProductsPage {
       
       if (response.ok) {
         const data = await response.json();
-        this.products = data.data || data;
+        this.products = data.data || [];
         this.totalItems = data.total || this.products.length;
         this.renderTable();
         return;
       }
+      throw new Error(`HTTP ${response.status}`);
     } catch (err) {
-      console.log('Using mock data - API not available');
+      console.error('Failed to load products:', err.message);
+      toast.error('Failed to load products');
     }
     
-    // Fallback to mock data
-    this.products = this.getMockProducts();
-    this.totalItems = this.products.length;
+    this.products = [];
+    this.totalItems = 0;
     this.renderTable();
-  }
-  
-  getMockProducts() {
-    return [
-      { id: 1, name: 'Radiant Face Oil', sku: 'MHF-001', slug: 'radiant-face-oil', description: 'Luxurious ayurvedic face oil for glowing skin', price: 48.00, is_active: true, variants: [{ id: 1, name: '30ml', sku: 'MHF-001-30', price: 48.00, compare_at_price: 55.00, inventory_qty: 150, is_active: true }], image_key: null, created_at: '2024-01-15T10:00:00Z' },
-      { id: 2, name: 'Herbal Hair Mask', sku: 'MHH-001', slug: 'herbal-hair-mask', description: 'Deep conditioning mask with bhringraj and amla', price: 36.00, is_active: true, variants: [{ id: 2, name: '100g', sku: 'MHH-001-100', price: 36.00, compare_at_price: 42.00, inventory_qty: 89, is_active: true }, { id: 3, name: '200g', sku: 'MHH-001-200', price: 58.00, compare_at_price: 68.00, inventory_qty: 45, is_active: true }], image_key: null, created_at: '2024-01-20T10:00:00Z' },
-      { id: 3, name: 'Soothing Body Butter', sku: 'MHB-001', slug: 'soothing-body-butter', description: 'Rich body butter with shea and kokum', price: 42.00, is_active: false, variants: [{ id: 4, name: '200ml', sku: 'MHB-001-200', price: 42.00, compare_at_price: 48.00, inventory_qty: 12, is_active: true }], image_key: null, created_at: '2024-02-01T10:00:00Z' },
-      { id: 4, name: 'Cleansing Face Wash', sku: 'MHF-002', slug: 'cleansing-face-wash', description: 'Gentle foaming cleanser with neem and tulsi', price: 28.00, is_active: true, variants: [{ id: 5, name: '150ml', sku: 'MHF-002-150', price: 28.00, compare_at_price: null, inventory_qty: 200, is_active: true }], image_key: null, created_at: '2024-02-10T10:00:00Z' },
-      { id: 5, name: 'Ayurvedic Lip Balm', sku: 'MHF-003', slug: 'ayurvedic-lip-balm', description: 'Nourishing lip balm with ghee and rose', price: 18.00, is_active: true, variants: [{ id: 6, name: '10g', sku: 'MHF-003-10', price: 18.00, compare_at_price: 22.00, inventory_qty: 300, is_active: true }], image_key: null, created_at: '2024-02-15T10:00:00Z' },
-      { id: 6, name: 'Anti-Aging Serum', sku: 'MHF-004', slug: 'anti-aging-serum', description: 'Potent serum with bakuchiol and gotu kola', price: 65.00, is_active: true, variants: [{ id: 7, name: '30ml', sku: 'MHF-004-30', price: 65.00, compare_at_price: 75.00, inventory_qty: 67, is_active: true }], image_key: null, created_at: '2024-03-01T10:00:00Z' },
-      { id: 7, name: 'Detox Face Mask', sku: 'MHF-005', slug: 'detox-face-mask', description: 'Charcoal and clay mask for deep cleansing', price: 34.00, is_active: false, variants: [{ id: 8, name: '75g', sku: 'MHF-005-75', price: 34.00, compare_at_price: 39.00, inventory_qty: 8, is_active: true }], image_key: null, created_at: '2024-03-05T10:00:00Z' },
-      { id: 8, name: 'Hair Growth Oil', sku: 'MHH-002', slug: 'hair-growth-oil', description: 'Stimulating oil with rosemary and brahmi', price: 32.00, is_active: true, variants: [{ id: 9, name: '50ml', sku: 'MHH-002-50', price: 32.00, compare_at_price: 38.00, inventory_qty: 134, is_active: true }, { id: 10, name: '100ml', sku: 'MHH-002-100', price: 55.00, compare_at_price: 65.00, inventory_qty: 56, is_active: true }], image_key: null, created_at: '2024-03-10T10:00:00Z' },
-      { id: 9, name: 'Body Scrub', sku: 'MHB-002', slug: 'body-scrub', description: 'Exfoliating scrub with walnut and turmeric', price: 26.00, is_active: true, variants: [{ id: 11, name: '250g', sku: 'MHB-002-250', price: 26.00, compare_at_price: 32.00, inventory_qty: 78, is_active: true }], image_key: null, created_at: '2024-03-15T10:00:00Z' },
-      { id: 10, name: 'Eye Cream', sku: 'MHF-006', slug: 'eye-cream', description: 'Brightening eye cream with saffron', price: 52.00, is_active: true, variants: [{ id: 12, name: '15ml', sku: 'MHF-006-15', price: 52.00, compare_at_price: 60.00, inventory_qty: 43, is_active: true }], image_key: null, created_at: '2024-03-20T10:00:00Z' },
-      { id: 11, name: 'Hand Cream', sku: 'MHB-003', slug: 'hand-cream', description: 'Moisturizing hand cream with almond oil', price: 22.00, is_active: true, variants: [{ id: 13, name: '50ml', sku: 'MHB-003-50', price: 22.00, compare_at_price: null, inventory_qty: 156, is_active: true }], image_key: null, created_at: '2024-04-01T10:00:00Z' },
-      { id: 12, name: 'Foot Cream', sku: 'MHB-004', slug: 'foot-cream', description: 'Healing foot cream with neem and mint', price: 24.00, is_active: false, variants: [{ id: 14, name: '75ml', sku: 'MHB-004-75', price: 24.00, compare_at_price: 28.00, inventory_qty: 5, is_active: true }], image_key: null, created_at: '2024-04-05T10:00:00Z' },
-      { id: 13, name: 'Face Toner', sku: 'MHF-007', slug: 'face-toner', description: 'Balancing toner with rose water and witch hazel', price: 24.00, is_active: true, variants: [{ id: 15, name: '200ml', sku: 'MHF-007-200', price: 24.00, compare_at_price: 28.00, inventory_qty: 189, is_active: true }], image_key: null, created_at: '2024-04-10T10:00:00Z' },
-      { id: 14, name: 'Beard Oil', sku: 'MHH-003', slug: 'beard-oil', description: 'Conditioning beard oil with jojoba and argan', price: 28.00, is_active: true, variants: [{ id: 16, name: '30ml', sku: 'MHH-003-30', price: 28.00, compare_at_price: 34.00, inventory_qty: 92, is_active: true }], image_key: null, created_at: '2024-04-15T10:00:00Z' },
-      { id: 15, name: 'Massage Oil', sku: 'MHB-005', slug: 'massage-oil', description: 'Relaxing massage oil with lavender and sandalwood', price: 38.00, is_active: true, variants: [{ id: 17, name: '100ml', sku: 'MHB-005-100', price: 38.00, compare_at_price: 45.00, inventory_qty: 67, is_active: true }], image_key: null, created_at: '2024-04-20T10:00:00Z' }
-    ];
   }
   
   renderTable() {
     const columns = [
       { key: 'image', label: 'Image', width: '60px', render: (row) => `
-        <img src="${row.image_key ? `https://images.maisonhygia.adityanair.tech/${row.image_key}` : '/admin-dashboard/assets/logo.svg'}" 
+        <img src="${row.image_url || 'assets/logo.svg'}" 
              alt="${this.escapeHtml(row.name)}" class="image-thumb" style="object-fit: cover;">
       ` },
       { key: 'name', label: 'Name', sortable: true, render: (row) => `
@@ -163,7 +142,7 @@ export class ProductsPage {
       { key: 'price', label: 'Base Price', sortable: true, render: (row) => formatCurrency(row.price) },
       { key: 'variants', label: 'Variants', render: (row) => `<span class="variants-count">${row.variants?.length || 0} variant${(row.variants?.length || 0) !== 1 ? 's' : ''}</span>` },
       { key: 'stock', label: 'Stock', sortable: true, render: (row) => {
-        const totalStock = row.variants?.reduce((sum, v) => sum + (v.inventory_qty || 0), 0) || 0;
+        const totalStock = row.variants?.reduce((sum, v) => sum + (v.inventory_quantity || 0), 0) || 0;
         const stockClass = totalStock === 0 ? 'out' : totalStock < 10 ? 'low' : 'ok';
         return `<span class="stock ${stockClass}">${formatNumber(totalStock)}</span>`;
       }},
@@ -246,7 +225,7 @@ export class ProductsPage {
     if (!product) return;
     
     try {
-      await api.put(`/products/${id}`, { ...product, is_active: isActive });
+      await api.put(`/products/${id}`, { is_active: isActive });
       product.is_active = isActive;
       toast.success(`Product ${isActive ? 'activated' : 'deactivated'}`);
     } catch (err) {
@@ -267,10 +246,8 @@ export class ProductsPage {
     
     try {
       await api.delete(`/products/${id}`);
-      this.products = this.products.filter(p => p.id !== id);
-      this.totalItems = this.products.length;
-      this.renderTable();
       toast.success('Product deleted');
+      this.loadProducts();
     } catch (err) {
       toast.error('Failed to delete product');
     }
@@ -490,7 +467,7 @@ export class ProductsPage {
         </div>
         <div class="form-group">
           <label class="form-label">Inventory</label>
-          <input type="number" class="form-input" name="variant_inventory_${variantId}" value="${variant.inventory_qty || 0}" placeholder="0" min="0" required>
+          <input type="number" class="form-input" name="variant_inventory_${variantId}" value="${variant.inventory_quantity ?? variant.inventory_qty ?? 0}" placeholder="0" min="0" required>
         </div>
         <button type="button" class="variant-remove" data-variant-id="${variantId}" aria-label="Remove variant">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -642,7 +619,7 @@ export class ProductsPage {
           sku,
           price,
           compare_at_price: compareAtPrice ? parseFloat(compareAtPrice) : null,
-          inventory_qty: inventoryQty || 0,
+          inventory_quantity: inventoryQty || 0,
           is_active: true
         });
       }
@@ -664,13 +641,24 @@ export class ProductsPage {
       variants
     };
     
-    // Handle image upload (mock - would upload to presigned URL in production)
+    // Handle image upload via presigned URL
     const imageInput = form.querySelector('#imageInput');
     if (imageInput.files[0]) {
-      // In production: upload to presigned URL
-      productData.image_key = `products/${generateId()}-${imageInput.files[0].name}`;
-    } else if (product?.image_key) {
-      productData.image_key = product.image_key;
+      try {
+        const file = imageInput.files[0];
+        const upload = await api.postJson('/upload-url', {
+          filename: file.name,
+          folder: 'products',
+          size: file.size
+        });
+        await api.uploadFile(upload.url, file);
+        productData.image_url = upload.public_url;
+      } catch (uploadErr) {
+        toast.error('Failed to upload image');
+        return;
+      }
+    } else if (product?.image_url) {
+      productData.image_url = product.image_url;
     }
     
     try {

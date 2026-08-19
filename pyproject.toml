@@ -9,10 +9,14 @@ description = "Maison Hygia Backend API"
 requires-python = ">=3.10"
 
 dependencies = [
+    "alembic>=1.16",
+    "boto3>=1.39",
     "fastapi>=0.141",
     "sqlalchemy>=2.0.52",
     "psycopg2-binary>=2.9",
     "pydantic>=2.13",
+    "pydantic-settings>=2.11",
+    "python-json-logger>=3.4",
     "stripe>=15.5",
     "httpx>=0.28",
     "uvicorn>=0.52",

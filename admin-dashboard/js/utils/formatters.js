@@ -116,8 +116,7 @@ export function formatStatus(status) {
   const statusMap = {
     pending: { label: 'Pending', class: 'badge-warning' },
     paid: { label: 'Paid', class: 'badge-success' },
-    shipped: { label: 'Shipped', class: 'badge-info' },
-    delivered: { label: 'Delivered', class: 'badge-success' },
+    fulfilled: { label: 'Fulfilled', class: 'badge-info' },
     cancelled: { label: 'Cancelled', class: 'badge-error' },
     refunded: { label: 'Refunded', class: 'badge-neutral' },
     active: { label: 'Active', class: 'badge-success' },
@@ -135,8 +134,7 @@ export function getStatusConfig(status) {
   const statusMap = {
     pending: { label: 'Pending', class: 'badge-warning', color: 'warning' },
     paid: { label: 'Paid', class: 'badge-success', color: 'success' },
-    shipped: { label: 'Shipped', class: 'badge-info', color: 'info' },
-    delivered: { label: 'Delivered', class: 'badge-success', color: 'success' },
+    fulfilled: { label: 'Fulfilled', class: 'badge-info', color: 'info' },
     cancelled: { label: 'Cancelled', class: 'badge-error', color: 'error' },
     refunded: { label: 'Refunded', class: 'badge-neutral', color: 'muted' },
     active: { label: 'Active', class: 'badge-success', color: 'success' },

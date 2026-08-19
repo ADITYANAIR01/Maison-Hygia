@@ -1,0 +1,113 @@
+name: Deploy Backend
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'backend/**'
+      - 'alembic/**'
+      - 'alembic.ini'
+      - 'Dockerfile'
+      - 'requirements.txt'
+      - 'pyproject.toml'
+      - '.github/workflows/deploy-backend.yml'
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: Run tests
+        run: |
+          python -m pytest
+      - name: Lint with ruff
+        run: |
+          ruff check backend/
+      - name: Format check with black
+        run: |
+          black --check backend/
+
+  deploy:
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: us-east-1
+          role-session-name: maison-hygia-backend-deploy
+      - name: Login to Amazon ECR
+        uses: aws-actions/amazon-ecr-login@v2
+      - name: Build and push Docker image
+        env:
+          IMAGE_URI: ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.us-east-1.amazonaws.com/${{ secrets.ECR_REPOSITORY }}:sha-${{ github.sha }}
+        run: |
+          IMAGE_URI="${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.us-east-1.amazonaws.com/${{ secrets.ECR_REPOSITORY }}:sha-${GITHUB_SHA::12}"
+          docker build -t "$IMAGE_URI" .
+          docker push "$IMAGE_URI"
+      - name: Update launch template
+        env:
+          LAUNCH_TEMPLATE_ID: ${{ secrets.LAUNCH_TEMPLATE_ID }}
+        run: |
+          IMAGE_TAG="sha-${GITHUB_SHA::12}"
+          IMAGE_URI="${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.us-east-1.amazonaws.com/${{ secrets.ECR_REPOSITORY }}:$IMAGE_TAG"
+          USER_DATA=$(aws ec2 describe-launch-template-versions \
+            --launch-template-id "$LAUNCH_TEMPLATE_ID" \
+            --versions "\$Latest" \
+            --query 'LaunchTemplateVersions[0].LaunchTemplateData.UserData' \
+            --output text | base64 --decode)
+          NEW_USER_DATA=$(printf '%s' "$USER_DATA" | sed -E "s/sha-[0-9a-f]{12}/$IMAGE_TAG/g")
+          aws ec2 create-launch-template-version \
+            --launch-template-id "$LAUNCH_TEMPLATE_ID" \
+            --source-version "\$Latest" \
+            --version-description "deploy $IMAGE_TAG" \
+            --launch-template-data "{\"UserData\":\"$(printf '%s' "$NEW_USER_DATA" | base64 -w0)\"}"
+          echo "New launch template version created with $IMAGE_URI"
+      - name: Start ASG instance refresh
+        env:
+          ASG_NAME: ${{ secrets.ASG_NAME }}
+        run: |
+          REFRESH_ID=$(aws autoscaling start-instance-refresh \
+            --auto-scaling-group-name "$ASG_NAME" \
+            --preferences '{"InstanceWarmup": 300, "MinHealthyPercentage": 100, "SkipMatching": true}' \
+            --query 'InstanceRefreshId' \
+            --output text)
+          echo "Instance refresh started: $REFRESH_ID"
+      - name: Wait for instance refresh
+        env:
+          ASG_NAME: ${{ secrets.ASG_NAME }}
+        run: |
+          REFRESH_ID=$(aws autoscaling describe-instance-refreshes \
+            --auto-scaling-group-name "$ASG_NAME" \
+            --query 'InstanceRefreshes[0].InstanceRefreshId' \
+            --output text)
+          STATUS=$(aws autoscaling describe-instance-refreshes \
+            --auto-scaling-group-name "$ASG_NAME" \
+            --instance-refresh-ids "$REFRESH_ID" \
+            --query 'InstanceRefreshes[0].Status' \
+            --output text)
+          while [[ "$STATUS" == "Pending" || "$STATUS" == "InProgress" || "$STATUS" == "Cancelling" ]]; do
+            sleep 20
+            STATUS=$(aws autoscaling describe-instance-refreshes \
+              --auto-scaling-group-name "$ASG_NAME" \
+              --instance-refresh-ids "$REFRESH_ID" \
+              --query 'InstanceRefreshes[0].Status' \
+              --output text)
+          done
+          echo "Instance refresh status: $STATUS"
+          if [[ "$STATUS" != "Successful" ]]; then
+            exit 1
+          fi

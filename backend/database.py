@@ -1,31 +1,11 @@
-import os
-from pathlib import Path
-
 from sqlalchemy import create_engine
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
 
-# DATABASE_URL is required — no fallback to SQLite.
-# Set it to a PostgreSQL connection string, e.g.:
-#   postgresql://postgres:password@localhost:5432/maison_hygia
-#   postgresql://postgres:pw@db.supabase.co:5432/postgres (Supabase)
-#   postgresql://user:pw@aws-rds-endpoint:5432/maison_hygia (AWS RDS)
-DATABASE_URL = os.getenv("DATABASE_URL")
-if not DATABASE_URL:
-    raise ValueError(
-        "DATABASE_URL environment variable is required. "
-        "Set it to a PostgreSQL connection string, e.g. "
-        "postgresql://postgres:password@localhost:5432/maison_hygia"
-    )
+from .config import settings
 
-BASE_DIR = Path(__file__).resolve().parent
-
-# Frontend base URL used for Stripe checkout redirects
-FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:8000")
-
-# CORS
-ALLOWED_ORIGINS = os.getenv(
-    "ALLOWED_ORIGINS", "http://localhost:8000,http://localhost:8001"
-).split(",")
+DATABASE_URL = settings.DATABASE_URL
+FRONTEND_URL = settings.FRONTEND_URL
+ALLOWED_ORIGINS = settings.ALLOWED_ORIGINS
 
 
 class Base(DeclarativeBase):

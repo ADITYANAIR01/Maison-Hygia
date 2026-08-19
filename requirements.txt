@@ -1,9 +1,13 @@
+alembic==1.19.1
+boto3==1.43.74
 fastapi==0.141.1
 httpx==0.28.1
 psycopg2-binary==2.9.12
 pydantic==2.13.4
 pydantic_core==2.46.4
+pydantic-settings==2.15.0
 python-jose[cryptography]==3.5.0
+python-json-logger==4.2.0
 python-multipart==0.0.20
 sqlalchemy==2.0.52
 stripe==15.5.0

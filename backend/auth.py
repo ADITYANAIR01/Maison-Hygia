@@ -1,23 +1,14 @@
 """Authentication and authorization utilities for admin endpoints."""
 
-import os
 import time
 
 import httpx
 from fastapi import Depends, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import JWTError, jwt
-from sqlalchemy.orm import Session
 
+from .config import settings
 from .database import SessionLocal
-from .models import UserRole
-
-# Supabase configuration
-SUPABASE_URL = os.getenv("SUPABASE_URL")
-SUPABASE_JWKS_URL = (
-    f"{SUPABASE_URL}/auth/v1/.well-known/jwks.json" if SUPABASE_URL else None
-)
-SUPABASE_ISSUER = f"{SUPABASE_URL}/auth/v1" if SUPABASE_URL else None
 
 security = HTTPBearer(auto_error=False)
 
@@ -44,11 +35,25 @@ def get_db():
         db.close()
 
 
+def _jwks_url() -> str:
+    return (
+        f"https://cognito-idp.{settings.AWS_REGION}.amazonaws.com/"
+        f"{settings.COGNITO_USER_POOL_ID}/.well-known/jwks.json"
+    )
+
+
+def _issuer() -> str:
+    return (
+        f"https://cognito-idp.{settings.AWS_REGION}.amazonaws.com/"
+        f"{settings.COGNITO_USER_POOL_ID}"
+    )
+
+
 def get_jwks() -> dict:
-    """Fetch and cache JWKS from Supabase with 1-hour TTL."""
+    """Fetch and cache Cognito JWKS with 1-hour TTL."""
     global _JWKS_CACHE, _JWKS_CACHE_TIME
 
-    if not SUPABASE_JWKS_URL:
+    if not settings.COGNITO_USER_POOL_ID:
         return {"keys": []}
 
     now = time.time()
@@ -56,7 +61,7 @@ def get_jwks() -> dict:
         return _JWKS_CACHE
 
     try:
-        response = httpx.get(SUPABASE_JWKS_URL, timeout=10.0)
+        response = httpx.get(_jwks_url(), timeout=10.0)
         response.raise_for_status()
         _JWKS_CACHE = response.json()
         _JWKS_CACHE_TIME = now
@@ -65,12 +70,18 @@ def get_jwks() -> dict:
         return {"keys": []}
 
 
-def verify_supabase_jwt(token: str) -> dict:
-    """Verify Supabase JWT token and return payload."""
-    if not SUPABASE_JWKS_URL or not SUPABASE_ISSUER:
+def _reset_jwks_cache() -> None:
+    global _JWKS_CACHE, _JWKS_CACHE_TIME
+    _JWKS_CACHE = None
+    _JWKS_CACHE_TIME = 0
+
+
+def verify_cognito_jwt(token: str) -> dict:
+    """Verify a Cognito JWT token and return the payload."""
+    if not settings.COGNITO_USER_POOL_ID or not settings.COGNITO_APP_CLIENT_ID:
         raise AuthError(
             status.HTTP_503_SERVICE_UNAVAILABLE,
-            "Supabase authentication not configured",
+            "Cognito authentication not configured",
         )
 
     jwks = get_jwks()
@@ -80,7 +91,6 @@ def verify_supabase_jwt(token: str) -> dict:
             "Unable to fetch JWKS",
         )
 
-    # Get the key ID from token header
     try:
         unverified_header = jwt.get_unverified_header(token)
     except JWTError:
@@ -90,32 +100,35 @@ def verify_supabase_jwt(token: str) -> dict:
     if not kid:
         raise AuthError(status.HTTP_401_UNAUTHORIZED, "Token missing key ID")
 
-    # Find matching key
     key = next((k for k in jwks["keys"] if k.get("kid") == kid), None)
     if not key:
-        # Refresh JWKS cache and try once more
-        get_jwks.cache_clear()
+        # Refresh the JWKS cache manually and try once more.
+        _reset_jwks_cache()
         jwks = get_jwks()
         key = next((k for k in jwks["keys"] if k.get("kid") == kid), None)
         if not key:
             raise AuthError(status.HTTP_401_UNAUTHORIZED, "Invalid token key")
 
-    # Verify and decode token
     try:
         payload = jwt.decode(
             token,
             key,
             algorithms=["RS256"],
-            audience="authenticated",
-            issuer=SUPABASE_ISSUER,
+            issuer=_issuer(),
+            options={"verify_aud": False},
         )
-        return payload
     except jwt.ExpiredSignatureError:
         raise AuthError(status.HTTP_401_UNAUTHORIZED, "Token has expired")
     except jwt.JWTClaimsError as e:
         raise AuthError(status.HTTP_401_UNAUTHORIZED, f"Invalid token claims: {e}")
     except JWTError as e:
         raise AuthError(status.HTTP_401_UNAUTHORIZED, f"Invalid token: {e}")
+
+    audience = payload.get("aud") or payload.get("client_id")
+    if audience != settings.COGNITO_APP_CLIENT_ID:
+        raise AuthError(status.HTTP_401_UNAUTHORIZED, "Invalid token audience")
+
+    return payload
 
 
 def get_current_user(
@@ -129,8 +142,7 @@ def get_current_user(
         )
 
     try:
-        payload = verify_supabase_jwt(credentials.credentials)
-        return payload
+        return verify_cognito_jwt(credentials.credentials)
     except AuthError:
         raise
     # fmt: off
@@ -139,59 +151,19 @@ def get_current_user(
     # fmt: on
 
 
-def require_admin(
-    user: dict = Depends(get_current_user),
-    db: Session = Depends(get_db),
-) -> dict:
-    """Require user to have admin role."""
-    user_id = user.get("sub")
-    if not user_id:
-        raise AuthError(status.HTTP_401_UNAUTHORIZED, "Invalid token: missing subject")
+def require_admin(user: dict = Depends(get_current_user)) -> dict:
+    """Require the authenticated user to have the admin role.
 
-    # Check user_roles table for admin role
-    role = (
-        db.query(UserRole)
-        .filter(
-            UserRole.user_id == user_id,
-            UserRole.role == "admin",
-        )
-        .first()
-    )
-
-    if not role:
+    Admin is granted via the Cognito ``custom:role`` claim or membership in the
+    ``admin`` Cognito group. No database role lookup is performed.
+    """
+    role = user.get("custom:role")
+    groups = user.get("cognito:groups") or []
+    if role != "admin" and "admin" not in groups:
         raise AuthError(
             status.HTTP_403_FORBIDDEN,
             "Admin access required",
         )
 
-    # Attach user_id to payload for convenience
-    user["user_id"] = user_id
-    return user
-
-
-def require_editor_or_admin(
-    user: dict = Depends(get_current_user),
-    db: Session = Depends(get_db),
-) -> dict:
-    """Require user to have editor or admin role."""
-    user_id = user.get("sub")
-    if not user_id:
-        raise AuthError(status.HTTP_401_UNAUTHORIZED, "Invalid token: missing subject")
-
-    role = (
-        db.query(UserRole)
-        .filter(
-            UserRole.user_id == user_id,
-            UserRole.role.in_(["admin", "editor"]),
-        )
-        .first()
-    )
-
-    if not role:
-        raise AuthError(
-            status.HTTP_403_FORBIDDEN,
-            "Editor or admin access required",
-        )
-
-    user["user_id"] = user_id
+    user["user_id"] = user.get("sub")
     return user

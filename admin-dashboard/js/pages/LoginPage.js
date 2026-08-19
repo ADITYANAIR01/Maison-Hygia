@@ -18,7 +18,7 @@ export class LoginPage {
       <div class="login-page">
         <div class="login-card">
           <div class="login-header">
-            <img src="/admin-dashboard/assets/logo.svg" alt="Maison Hygia" class="login-logo" width="80" height="80">
+            <img src="assets/logo.svg" alt="Maison Hygia" class="login-logo" width="80" height="80">
             <h1 class="login-title">Admin Dashboard</h1>
             <p class="login-subtitle">Sign in to manage your store</p>
           </div>
@@ -36,18 +36,10 @@ export class LoginPage {
             </div>
           </form>
           
-          <div class="login-divider">
-            <span>Or</span>
-          </div>
-          
           <div class="login-form">
             <p style="font-size: var(--text-sm); color: var(--color-text-secondary); margin: 0;">
-              Demo credentials (for development):
+              You will be redirected to the Cognito hosted sign-in page.
             </p>
-            <div style="display: flex; flex-direction: column; gap: var(--space-2); margin-top: var(--space-3);">
-              <button type="button" class="btn btn-outline btn-sm" id="demoAdminBtn">Admin Demo</button>
-              <button type="button" class="btn btn-outline btn-sm" id="demoEditorBtn">Editor Demo</button>
-            </div>
           </div>
           
           <p class="login-footer">
@@ -58,15 +50,11 @@ export class LoginPage {
     `;
     
     this.cognitoLoginBtn = this.container.querySelector('#cognitoLoginBtn');
-    this.demoAdminBtn = this.container.querySelector('#demoAdminBtn');
-    this.demoEditorBtn = this.container.querySelector('#demoEditorBtn');
     this.forgotPasswordLink = this.container.querySelector('#forgotPasswordLink');
   }
   
   bindEvents() {
     this.cognitoLoginBtn.addEventListener('click', () => this.handleCognitoLogin());
-    this.demoAdminBtn.addEventListener('click', () => this.handleDemoLogin('admin'));
-    this.demoEditorBtn.addEventListener('click', () => this.handleDemoLogin('editor'));
     this.forgotPasswordLink.addEventListener('click', (e) => {
       e.preventDefault();
       Modal.alert('Reset Password', 'Password reset functionality would be handled by Cognito Hosted UI.');
@@ -93,45 +81,6 @@ export class LoginPage {
         Sign in with Cognito
       `;
     }
-  }
-  
-  handleDemoLogin(role) {
-    // For development - create mock tokens
-    const mockUser = {
-      sub: `demo-${role}-${Date.now()}`,
-      email: `${role}@maisonhygia.demo`,
-      name: `${role.charAt(0).toUpperCase() + role.slice(1)} Demo`,
-      role: role,
-      groups: role === 'admin' ? ['admin'] : ['editor']
-    };
-    
-    const mockTokens = {
-      access_token: `mock-access-token-${role}-${Date.now()}`,
-      refresh_token: `mock-refresh-token-${role}-${Date.now()}`,
-      id_token: this._createMockIdToken(mockUser),
-      expires_in: 3600
-    };
-    
-    store.setTokens(mockTokens);
-    store.setUser(mockUser);
-    
-    // Redirect to dashboard
-    window.location.hash = '#dashboard';
-  }
-  
-  _createMockIdToken(user) {
-    const header = btoa(JSON.stringify({ alg: 'RS256', typ: 'JWT' }));
-    const payload = btoa(JSON.stringify({
-      sub: user.sub,
-      email: user.email,
-      name: user.name,
-      'custom:role': user.role,
-      'cognito:groups': user.groups,
-      exp: Math.floor(Date.now() / 1000) + 3600,
-      iat: Math.floor(Date.now() / 1000)
-    }));
-    const signature = btoa('mock-signature');
-    return `${header}.${payload}.${signature}`;
   }
   
   destroy() {

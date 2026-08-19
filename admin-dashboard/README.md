@@ -11,7 +11,6 @@ Production-ready admin dashboard for Maison Hygia e-commerce platform. Built wit
 - **Hash Routing**: SPA navigation with route guards
 - **Component Library**: Tables, Modals, Forms, Charts, Toasts, Dropdowns
 - **Accessibility**: WCAG AA compliant, keyboard navigation, ARIA labels
-- **Mock Data**: Realistic fallback data for development without backend
 
 ## 📁 Project Structure
 
@@ -49,8 +48,7 @@ admin-dashboard/
     │   ├── ProductsPage.js
     │   ├── OrdersPage.js
     │   ├── UsersPage.js
-    │   ├── InventoryPage.js
-    │   └── SettingsPage.js
+    │   └── InventoryPage.js
     └── utils/
         ├── formatters.js  # Currency, dates, numbers
         ├── validators.js  # Form validation rules
@@ -74,21 +72,15 @@ Open `http://localhost:8000` in your browser.
 
 ### Configuration
 
-Update the meta tags in `index.html` with your Cognito credentials:
+Update the meta tags in `index.html` with your Cognito credentials and API base URL:
 
 ```html
 <meta name="cognito-client-id" content="YOUR_CLIENT_ID">
 <meta name="cognito-domain" content="auth.maisonhygia.adityanair.tech">
+<meta name="api-base-url" content="https://api.maisonhygia.adityanair.tech/api/v1/admin">
 ```
 
-Or set them programmatically before `app.js` loads:
-
-```javascript
-window.COGNITO_CONFIG = {
-  clientId: 'YOUR_CLIENT_ID',
-  domain: 'auth.maisonhygia.adityanair.tech'
-};
-```
+`js/api.js` reads `api-base-url` and falls back to the default above if the tag is missing.
 
 ## 🔐 Authentication Flow
 
@@ -121,7 +113,6 @@ sessionStorage:
 | `#orders` | Orders | List, detail, status, refunds |
 | `#users` | Users | List, roles, enable/disable |
 | `#inventory` | Inventory | Stock levels, bulk edit |
-| `#settings` | Settings | Site config (JSON), email templates |
 
 ## 🛠 API Integration
 
@@ -139,6 +130,7 @@ GET    /products?page=1&limit=20
 POST   /products
 PUT    /products/:id
 DELETE /products/:id
+POST   /upload-url
 GET    /orders?page=1&limit=20
 PUT    /orders/:id
 POST   /orders/:id/refund
@@ -147,12 +139,6 @@ PUT    /users/:id/role
 PUT    /users/:id (enable/disable)
 GET    /inventory?page=1&limit=50
 PUT    /inventory/bulk
-GET    /settings/site-config
-PUT    /settings/site-config
-GET    /settings/email-templates
-POST   /settings/email-templates
-PUT    /settings/email-templates/:id
-DELETE /settings/email-templates/:id
 ```
 
 ### Response Format
@@ -229,11 +215,9 @@ store.toggleTheme(); // or store.setTheme('dark')
 | `COGNITO_DOMAIN` | Cognito Hosted UI domain | `auth.maisonhygia.adityanair.tech` |
 | `API_BASE_URL` | Backend API URL | `https://api.maisonhygia.adityanair.tech/api/v1/admin` |
 
-## 🧪 Development with Mock Data
+## 🔌 Backend Requirements
 
-All pages include realistic mock data in their `getMock*()` methods. The dashboard loads mock data first, then attempts to fetch real data from the API. If the API is unavailable, mock data persists.
-
-To disable mock data, remove the `catch` blocks in page `loadData()` methods.
+The dashboard requires the backend JSON API (all responses shaped `{data, total, page, limit}`). No mock fallback: if the API is unreachable, pages show an error toast and empty tables.
 
 ## 🔧 Customization
 

@@ -9,6 +9,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy application code
 COPY backend/ ./backend/
 COPY Website/ ./Website/
+COPY admin-dashboard/ ./admin-dashboard/
+COPY alembic/ ./alembic/
+COPY alembic.ini ./
 COPY cli.py ./
 
 # Expose ports
@@ -16,5 +19,7 @@ COPY cli.py ./
 # - 8001: Backend API
 EXPOSE 8000 8001
 
-# Default: run the backend API. docker-compose overrides the command per service.
-CMD ["uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "8001"]
+# Default: run Alembic migrations, then the backend API.
+# `exec` ensures uvicorn is PID 1 so SIGTERM drains gracefully.
+# docker-compose overrides the command per service.
+CMD ["sh", "-c", "alembic upgrade head && exec uvicorn backend.main:app --host 0.0.0.0 --port 8001"]
