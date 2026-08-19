@@ -33,9 +33,7 @@ class Base(DeclarativeBase):
 
 
 connect_args = {}  # No SQLite-specific args; PostgreSQL handles connections natively
-engine = create_engine(
-    DATABASE_URL, pool_pre_ping=True, future=True
-)
+engine = create_engine(DATABASE_URL, pool_pre_ping=True, future=True)
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine, future=True)
 

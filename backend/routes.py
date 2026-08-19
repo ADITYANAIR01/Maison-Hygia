@@ -20,7 +20,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from . import models
-from .auth import require_admin, require_editor_or_admin
+from .auth import require_admin
 from .database import FRONTEND_URL, SessionLocal
 
 stripe.api_key = os.environ.get("STRIPE_SECRET_KEY")

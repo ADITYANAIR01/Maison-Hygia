@@ -1,0 +1,43 @@
+{
+  "name": "Maison Hygia Admin Dashboard",
+  "short_name": "Maison Hygia",
+  "description": "Ayurvedic Wellness E-commerce Admin Dashboard",
+  "start_url": "/admin/",
+  "display": "standalone",
+  "background_color": "#F5F0E8",
+  "theme_color": "#C8A951",
+  "orientation": "portrait-primary",
+  "icons": [
+    {
+      "src": "/admin-dashboard/assets/logo.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ],
+  "categories": ["business", "productivity"],
+  "screenshots": [],
+  "shortcuts": [
+    {
+      "name": "Dashboard",
+      "short_name": "Dashboard",
+      "description": "View dashboard overview",
+      "url": "/admin/#dashboard",
+      "icons": [{ "src": "/admin-dashboard/assets/logo.svg", "sizes": "192x192" }]
+    },
+    {
+      "name": "Products",
+      "short_name": "Products",
+      "description": "Manage products",
+      "url": "/admin/#products",
+      "icons": [{ "src": "/admin-dashboard/assets/logo.svg", "sizes": "192x192" }]
+    },
+    {
+      "name": "Orders",
+      "short_name": "Orders",
+      "description": "Manage orders",
+      "url": "/admin/#orders",
+      "icons": [{ "src": "/admin-dashboard/assets/logo.svg", "sizes": "192x192" }]
+    }
+  ]
+}

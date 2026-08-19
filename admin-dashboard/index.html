@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Maison Hygia Admin Dashboard - Ayurvedic Wellness E-commerce Management">
+  <meta name="theme-color" content="#C8A951">
+  
+  <!-- Cognito Config (set these via your deployment) -->
+  <meta name="cognito-client-id" content="your-client-id">
+  <meta name="cognito-domain" content="auth.maisonhygia.adityanair.tech">
+  
+  <title>Maison Hygia Admin Dashboard</title>
+  
+  <!-- Preconnect for performance -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="preconnect" href="https://cdn.jsdelivr.net">
+  
+  <!-- Google Fonts -->
+  <link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Cormorant+Garamond:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Cormorant+Garamond:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" media="print" onload="this.media='all'">
+  
+  <!-- CSS (load in order for cascade) -->
+  <link rel="stylesheet" href="/admin-dashboard/css/variables.css">
+  <link rel="stylesheet" href="/admin-dashboard/css/reset.css">
+  <link rel="stylesheet" href="/admin-dashboard/css/layout.css">
+  <link rel="stylesheet" href="/admin-dashboard/css/components.css">
+  <link rel="stylesheet" href="/admin-dashboard/css/pages.css">
+  <link rel="stylesheet" href="/admin-dashboard/css/darkmode.css">
+  
+  <!-- Favicon -->
+  <link rel="icon" type="image/svg+xml" href="/admin-dashboard/assets/logo.svg">
+  <link rel="apple-touch-icon" href="/admin-dashboard/assets/logo.svg">
+  
+  <!-- PWA manifest (optional) -->
+  <link rel="manifest" href="/admin-dashboard/manifest.json">
+</head>
+<body>
+  <!-- App will be mounted here by JavaScript -->
+  <div id="app" class="app"></div>
+  
+  <!-- Load Chart.js -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  
+  <!-- Load SortableJS (optional for drag-drop) -->
+  <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.2/Sortable.min.js"></script>
+  
+  <!-- Main Application -->
+  <script type="module" src="/admin-dashboard/js/app.js"></script>
+  
+  <!-- Performance monitoring -->
+  <script>
+    // Simple performance timing
+    window.addEventListener('load', () => {
+      setTimeout(() => {
+        const perf = performance.getEntriesByType('navigation')[0];
+        if (perf) {
+          console.log(`Page load: ${perf.loadEventEnd - perf.startTime}ms`);
+          console.log(`DOM ready: ${perf.domContentLoadedEventEnd - perf.startTime}ms`);
+        }
+      }, 0);
+    });
+  </script>
+</body>
+</html>
