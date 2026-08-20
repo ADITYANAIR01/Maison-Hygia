@@ -1,0 +1,1169 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: >-
+  Maison Hygia production stack - VPC, RDS PostgreSQL, S3 + CloudFront (Web/Admin/Assets),
+  Cognito, ALB + ASG backend compute, Secrets Manager + Parameter Store, and CloudWatch monitoring.
+  Auto-created from the AWS CLI build (Phase 5). Domain/DNS steps (Route 53, ACM wildcard cert)
+  are documented as post-deploy steps in the README.
+
+Parameters:
+  Environment:
+    Type: String
+    Default: prod
+    AllowedValues: [prod, staging]
+  Region:
+    Type: String
+    Default: ap-south-1
+  VpcCidr:
+    Type: String
+    Default: 10.0.0.0/16
+  ImageTag:
+    Type: String
+    Default: sha-000000000001
+    Description: ECR image tag referenced by the launch template User Data (rewritten by deploy-backend.yml).
+  DbInstanceClass:
+    Type: String
+    Default: db.t3.medium
+  DbAllocatedStorage:
+    Type: Number
+    Default: 100
+  DbMasterUsername:
+    Type: String
+    Default: maisonhygia_admin
+    NoEcho: true
+  DbMasterPassword:
+    Type: String
+    Default: ChangeMe_Placeholder_123
+    NoEcho: true
+    Description: Store the real password in Secrets Manager after deploy and update the secret.
+  AlertEmail:
+    Type: String
+    Default: maison-hygia-alerts@example.com
+    Description: SNS alarm notification email (must be confirmed in the inbox).
+  StripeSecretKey:
+    Type: String
+    Default: sk_test_PLACEHOLDER
+    NoEcho: true
+  StripeWebhookSecret:
+    Type: String
+    Default: whsec_PLACEHOLDER
+    NoEcho: true
+  SendGridApiKey:
+    Type: String
+    Default: SG.PLACEHOLDER
+    NoEcho: true
+
+Mappings:
+  RegionAzs:
+    ap-south-1:
+      AZA: ap-south-1a
+      AZB: ap-south-1b
+
+Resources:
+  # ---------------------------------------------------------------- Network
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: !Ref VpcCidr
+      EnableDnsHostnames: true
+      EnableDnsSupport: true
+      Tags:
+        - Key: Name
+          Value: !Sub maison-hygia-${Environment}-vpc
+        - Key: Project
+          Value: Maison-Hygia
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: !Sub maison-hygia-${Environment}-igw
+  InternetGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref VPC
+      InternetGatewayId: !Ref InternetGateway
+  PublicSubnetA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.0.0.0/24
+      AvailabilityZone: !FindInMap [RegionAzs, !Ref Region, AZA]
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Sub maison-hygia-public-a
+  PublicSubnetB:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.0.1.0/24
+      AvailabilityZone: !FindInMap [RegionAzs, !Ref Region, AZB]
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Sub maison-hygia-public-b
+  AppSubnetA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.0.10.0/24
+      AvailabilityZone: !FindInMap [RegionAzs, !Ref Region, AZA]
+      Tags:
+        - Key: Name
+          Value: !Sub maison-hygia-app-a
+  AppSubnetB:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.0.11.0/24
+      AvailabilityZone: !FindInMap [RegionAzs, !Ref Region, AZB]
+      Tags:
+        - Key: Name
+          Value: !Sub maison-hygia-app-b
+  DataSubnetA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.0.20.0/24
+      AvailabilityZone: !FindInMap [RegionAzs, !Ref Region, AZA]
+      Tags:
+        - Key: Name
+          Value: !Sub maison-hygia-data-a
+  DataSubnetB:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.0.21.0/24
+      AvailabilityZone: !FindInMap [RegionAzs, !Ref Region, AZB]
+      Tags:
+        - Key: Name
+          Value: !Sub maison-hygia-data-b
+  NatEIP:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+  NatGateway:
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt NatEIP.AllocationId
+      SubnetId: !Ref PublicSubnetA
+      Tags:
+        - Key: Name
+          Value: !Sub maison-hygia-${Environment}-nat-a
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub maison-hygia-public-rt
+  PublicRoute:
+    Type: AWS::EC2::Route
+    DependsOn: InternetGatewayAttachment
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+  PublicSubnetARouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnetA
+      RouteTableId: !Ref PublicRouteTable
+  PublicSubnetBRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnetB
+      RouteTableId: !Ref PublicRouteTable
+  AppRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub maison-hygia-app-rt
+  AppRoute:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref AppRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NatGateway
+  AppSubnetARouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref AppSubnetA
+      RouteTableId: !Ref AppRouteTable
+  AppSubnetBRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref AppSubnetB
+      RouteTableId: !Ref AppRouteTable
+  DataRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub maison-hygia-data-rt
+  DataRoute:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref DataRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NatGateway
+  DataSubnetARouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref DataSubnetA
+      RouteTableId: !Ref DataRouteTable
+  DataSubnetBRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref DataSubnetB
+      RouteTableId: !Ref DataRouteTable
+  S3VpcEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref VPC
+      ServiceName: !Sub com.amazonaws.${Region}.s3
+      VpcEndpointType: Gateway
+      RouteTableIds:
+        - !Ref AppRouteTable
+        - !Ref DataRouteTable
+      Tags:
+        - Key: Name
+          Value: !Sub maison-hygia-${Environment}-s3-gw-endpoint
+  # ------------------------------------------------------------- Security groups
+  ALBSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: ALB security group
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: !Sub maison-hygia-${Environment}-alb-sg
+  EC2SecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Backend EC2 security group
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 8001
+          ToPort: 8001
+          SourceSecurityGroupId: !Ref ALBSecurityGroup
+      Tags:
+        - Key: Name
+          Value: !Sub maison-hygia-${Environment}-ec2-sg
+  RDSSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: RDS security group
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 5432
+          ToPort: 5432
+          SourceSecurityGroupId: !Ref EC2SecurityGroup
+      Tags:
+        - Key: Name
+          Value: !Sub maison-hygia-${Environment}-rds-sg
+  # ---------------------------------------------------------------- Database
+  DBSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: Maison Hygia data subnets
+      SubnetIds:
+        - !Ref DataSubnetA
+        - !Ref DataSubnetB
+  DBParameterGroup:
+    Type: AWS::RDS::DBParameterGroup
+    Properties:
+      Family: postgres16
+      Description: Maison Hygia PostgreSQL 16 parameters
+      Parameters:
+        shared_preload_libraries: pg_stat_statements
+        log_min_duration_statement: "1000"
+  RDSInstance:
+    Type: AWS::RDS::DBInstance
+    DeletionPolicy: Snapshot
+    Properties:
+      DBInstanceIdentifier: !Sub maison-hygia-${Environment}
+      DBName: maisonhygia
+      Engine: postgres
+      EngineVersion: "16.14"
+      DBInstanceClass: !Ref DbInstanceClass
+      AllocatedStorage: !Ref DbAllocatedStorage
+      StorageType: gp3
+      MasterUsername: !Ref DbMasterUsername
+      MasterUserPassword: !Ref DbMasterPassword
+      DBSubnetGroupName: !Ref DBSubnetGroup
+      DBParameterGroupName: !Ref DBParameterGroup
+      VPCSecurityGroups:
+        - !Ref RDSSecurityGroup
+      BackupRetentionPeriod: 7
+      PreferredBackupWindow: "01:30-02:00"
+      PreferredMaintenanceWindow: "sun:03:00-sun:04:00"
+      PubliclyAccessible: false
+      MultiAZ: false
+      StorageEncrypted: true
+      DeletionProtection: true
+      AutoMinorVersionUpgrade: true
+      Tags:
+        - Key: Name
+          Value: !Sub maison-hygia-${Environment}
+        - Key: Project
+          Value: Maison-Hygia
+  # ---------------------------------------------------------------- Storage
+  S3WebBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    Properties:
+      BucketName: !Sub maison-hygia-${Environment}-web-${AWS::AccountId}
+      VersioningConfiguration:
+        Status: Enabled
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        IgnorePublicAcls: true
+        BlockPublicPolicy: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      Tags:
+        - Key: Project
+          Value: Maison-Hygia
+  S3AdminBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    Properties:
+      BucketName: !Sub maison-hygia-${Environment}-admin-${AWS::AccountId}
+      VersioningConfiguration:
+        Status: Enabled
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        IgnorePublicAcls: true
+        BlockPublicPolicy: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      Tags:
+        - Key: Project
+          Value: Maison-Hygia
+  S3AssetsBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    Properties:
+      BucketName: !Sub maison-hygia-${Environment}-assets-${AWS::AccountId}
+      VersioningConfiguration:
+        Status: Enabled
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        IgnorePublicAcls: true
+        BlockPublicPolicy: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      CorsConfiguration:
+        CorsRules:
+          - AllowedHeaders: ['*']
+            AllowedMethods: [GET, PUT, POST, HEAD]
+            AllowedOrigins:
+              - https://admin.maisonhygia.adityanair.tech
+              - https://maisonhygia.adityanair.tech
+            ExposedHeaders: [ETag]
+            MaxAge: 3000
+      Tags:
+        - Key: Project
+          Value: Maison-Hygia
+  S3WebBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref S3WebBucket
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: cloudfront.amazonaws.com
+            Action: s3:GetObject
+            Resource: !Sub arn:aws:s3:::${S3WebBucket}/*
+            Condition:
+              StringEquals:
+                AWS:SourceArn: !Sub arn:aws:cloudfront::${AWS::AccountId}:distribution/${CloudFrontWebDistribution}
+  S3AdminBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref S3AdminBucket
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: cloudfront.amazonaws.com
+            Action: s3:GetObject
+            Resource: !Sub arn:aws:s3:::${S3AdminBucket}/*
+            Condition:
+              StringEquals:
+                AWS:SourceArn: !Sub arn:aws:cloudfront::${AWS::AccountId}:distribution/${CloudFrontAdminDistribution}
+  S3AssetsBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref S3AssetsBucket
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: cloudfront.amazonaws.com
+            Action: s3:GetObject
+            Resource: !Sub arn:aws:s3:::${S3AssetsBucket}/*
+            Condition:
+              StringEquals:
+                AWS:SourceArn: !Sub arn:aws:cloudfront::${AWS::AccountId}:distribution/${CloudFrontAssetsDistribution}
+  # ---------------------------------------------------------------- Cognito
+  CognitoUserPool:
+    Type: AWS::Cognito::UserPool
+    Properties:
+      UserPoolName: !Sub maison-hygia-${Environment}
+      UsernameAttributes:
+        - email
+      AutoVerifiedAttributes:
+        - email
+      Schema:
+        - Name: email
+          AttributeDataType: String
+          Required: true
+          Mutable: true
+        - Name: custom:role
+          AttributeDataType: String
+          Required: false
+          Mutable: true
+      MfaConfiguration: "OFF"
+      EmailConfiguration:
+        EmailSendingAccount: COGNITO_DEFAULT
+      Policies:
+        PasswordPolicy:
+          MinimumLength: 8
+          RequireUppercase: true
+          RequireLowercase: true
+          RequireNumbers: true
+          RequireSymbols: true
+      AccountRecoverySetting:
+        RecoveryMechanisms:
+          - Priority: 1
+            Name: verified_email
+      UserPoolAddOns:
+        AdvancedSecurityMode: "OFF"
+  CognitoSpaClient:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      UserPoolId: !Ref CognitoUserPool
+      ClientName: maison-hygia-spa
+      GenerateSecret: false
+      ExplicitAuthFlows:
+        - ALLOW_REFRESH_TOKEN_AUTH
+        - ALLOW_USER_SRP_AUTH
+      AllowedOAuthFlows:
+        - code
+      AllowedOAuthScopes:
+        - openid
+        - email
+        - profile
+      AllowedOAuthFlowsUserPoolClient: true
+      CallbackURLs:
+        - https://maisonhygia.adityanair.tech/callback
+        - https://admin.maisonhygia.adityanair.tech/admin
+      LogoutURLs:
+        - https://maisonhygia.adityanair.tech/
+        - https://admin.maisonhygia.adityanair.tech/admin
+      SupportedIdentityProviders:
+        - COGNITO
+  CognitoBackendClient:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      UserPoolId: !Ref CognitoUserPool
+      ClientName: maison-hygia-backend
+      GenerateSecret: true
+      ExplicitAuthFlows:
+        - ALLOW_ADMIN_USER_PASSWORD_AUTH
+        - ALLOW_REFRESH_TOKEN_AUTH
+  CognitoAdminGroup:
+    Type: AWS::Cognito::UserPoolGroup
+    DependsOn: CognitoUserPool
+    Properties:
+      GroupName: admin
+      UserPoolId: !Ref CognitoUserPool
+  CognitoEditorGroup:
+    Type: AWS::Cognito::UserPoolGroup
+    DependsOn: CognitoUserPool
+    Properties:
+      GroupName: editor
+      UserPoolId: !Ref CognitoUserPool
+  CognitoCustomerGroup:
+    Type: AWS::Cognito::UserPoolGroup
+    DependsOn: CognitoUserPool
+    Properties:
+      GroupName: customer
+      UserPoolId: !Ref CognitoUserPool
+  CognitoUserPoolDomain:
+    Type: AWS::Cognito::UserPoolDomain
+    Properties:
+      Domain: !Sub maison-hygia-${Environment}
+      UserPoolId: !Ref CognitoUserPool
+  # ---------------------------------------------------------------- Compute IAM
+  EC2Role:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub maison-hygia-${Environment}-ec2-role
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+        - arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy
+      Policies:
+        - PolicyName: MaisonHygiaSecrets
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                  - secretsmanager:DescribeSecret
+                Resource: !Sub arn:aws:secretsmanager:${Region}:${AWS::AccountId}:secret:maison-hygia/${Environment}/*
+        - PolicyName: MaisonHygiaParams
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ssm:GetParameter
+                  - ssm:GetParameters
+                  - ssm:GetParametersByPath
+                Resource: !Sub arn:aws:ssm:${Region}:${AWS::AccountId}:parameter/maison-hygia/${Environment}/*
+        - PolicyName: MaisonHygiaS3Assets
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:PutObject
+                  - s3:GetObject
+                  - s3:DeleteObject
+                  - s3:ListBucket
+                Resource:
+                  - !GetAtt S3AssetsBucket.Arn
+                  - !Sub ${S3AssetsBucket.Arn}/*
+        - PolicyName: MaisonHygiaCognito
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - cognito-idp:ListUsers
+                  - cognito-idp:AdminAddUserToGroup
+                  - cognito-idp:AdminRemoveUserFromGroup
+                  - cognito-idp:AdminEnableUser
+                  - cognito-idp:AdminDisableUser
+                  - cognito-idp:ListGroups
+                  - cognito-idp:ListUserPools
+                Resource: !Sub arn:aws:cognito-idp:${Region}:${AWS::AccountId}:userpool/*
+      Tags:
+        - Key: Project
+          Value: Maison-Hygia
+  InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      InstanceProfileName: !Sub maison-hygia-${Environment}-ec2-instance-profile
+      Roles:
+        - !Ref EC2Role
+  # ---------------------------------------------------------------- ECR
+  ECRRepository:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: maison-hygia/backend
+      ImageScanningConfiguration:
+        ScanOnPush: true
+      EncryptionConfiguration:
+        EncryptionType: AES256
+      Tags:
+        - Key: Project
+          Value: Maison-Hygia
+  # ---------------------------------------------------------------- Secrets & params
+  SecretDatabase:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Sub maison-hygia/${Environment}/database
+      SecretString: !Sub '{"DATABASE_URL":"postgresql://${DbMasterUsername}:${DbMasterPassword}@${RDSInstance.Endpoint.Address}:5432/maisonhygia"}'
+  SecretStripe:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Sub maison-hygia/${Environment}/stripe
+      SecretString: !Sub '{"STRIPE_SECRET_KEY":"${StripeSecretKey}","STRIPE_WEBHOOK_SECRET":"${StripeWebhookSecret}"}'
+  SecretSendgrid:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Sub maison-hygia/${Environment}/sendgrid
+      SecretString: !Sub '{"SENDGRID_API_KEY":"${SendGridApiKey}","SMTP_HOST":"smtp.sendgrid.net","SMTP_PORT":"587","SMTP_FROM":"no-reply@maisonhygia.adityanair.tech"}'
+  SecretCognito:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Sub maison-hygia/${Environment}/cognito
+      SecretString: !Sub '{"COGNITO_USER_POOL_ID":"${CognitoUserPool}","COGNITO_APP_CLIENT_ID":"${CognitoSpaClient}","COGNITO_CLIENT_SECRET":"${CognitoBackendClient}"}'
+  ParamCorsOrigins:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub /maison-hygia/${Environment}/CORS_ORIGINS
+      Type: String
+      Value: https://admin.maisonhygia.adityanair.tech,https://maisonhygia.adityanair.tech
+  ParamLogLevel:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub /maison-hygia/${Environment}/LOG_LEVEL
+      Type: String
+      Value: INFO
+  ParamS3AssetsBucket:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub /maison-hygia/${Environment}/S3_ASSETS_BUCKET
+      Type: String
+      Value: !Ref S3AssetsBucket
+  ParamCfAssetsDomain:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub /maison-hygia/${Environment}/CF_ASSETS_DOMAIN
+      Type: String
+      Value: assets.maisonhygia.adityanair.tech
+  ParamCognitoPoolId:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub /maison-hygia/${Environment}/COGNITO_USER_POOL_ID
+      Type: String
+      Value: !Ref CognitoUserPool
+  ParamCognitoClientId:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub /maison-hygia/${Environment}/COGNITO_APP_CLIENT_ID
+      Type: String
+      Value: !Ref CognitoSpaClient
+  ParamAwsRegion:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub /maison-hygia/${Environment}/AWS_REGION
+      Type: String
+      Value: !Ref Region
+  # ---------------------------------------------------------------- Compute
+  TargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: !Sub maison-hygia-${Environment}-tg
+      Protocol: HTTP
+      Port: 8001
+      VpcId: !Ref VPC
+      TargetType: instance
+      HealthCheckProtocol: HTTP
+      HealthCheckPath: /health
+      HealthCheckIntervalSeconds: 30
+      HealthCheckTimeoutSeconds: 5
+      HealthyThresholdCount: 2
+      UnhealthyThresholdCount: 3
+      Tags:
+        - Key: Project
+          Value: Maison-Hygia
+  LoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Name: !Sub maison-hygia-${Environment}-alb
+      Scheme: internet-facing
+      Type: application
+      IpAddressType: ipv4
+      Subnets:
+        - !Ref PublicSubnetA
+        - !Ref PublicSubnetB
+      SecurityGroups:
+        - !Ref ALBSecurityGroup
+      Tags:
+        - Key: Project
+          Value: Maison-Hygia
+  LoadBalancerListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref LoadBalancer
+      Protocol: HTTP
+      Port: 80
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref TargetGroup
+  LaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateName: !Sub maison-hygia-${Environment}-lt
+      LaunchTemplateData:
+        ImageId: ami-0ac7b260cf76d8865
+        InstanceType: t3.medium
+        IamInstanceProfile:
+          Name: !Ref InstanceProfile
+        SecurityGroupIds:
+          - !Ref EC2SecurityGroup
+        BlockDeviceMappings:
+          - DeviceName: /dev/xvda
+            Ebs:
+              VolumeSize: 30
+              VolumeType: gp3
+              DeleteOnTermination: true
+        Monitoring:
+          Enabled: true
+        MetadataOptions:
+          HttpTokens: optional
+          HttpEndpoint: enabled
+        UserData: !Base64
+          Fn::Sub: |
+            #!/bin/bash
+            exec > /var/log/user-data.log 2>&1
+            set -x
+            dnf install -y docker > /dev/null 2>&1
+            systemctl enable --now docker
+            usermod -aG docker ec2-user
+
+            export REGION=${Region}
+            export ACCOUNT=${AWS::AccountId}
+            export IMAGE_TAG=${ImageTag}
+            REPO=$ACCOUNT.dkr.ecr.$REGION.amazonaws.com
+            IMAGE=$REPO/maison-hygia/backend:$IMAGE_TAG
+
+            DB_SECRET=$(aws secretsmanager get-secret-value --secret-id maison-hygia/${Environment}/database --region $REGION --query SecretString --output text)
+            DATABASE_URL=$(echo "$DB_SECRET" | python3 -c "import sys,json; print(json.load(sys.stdin)['DATABASE_URL'])")
+            COG_SECRET=$(aws secretsmanager get-secret-value --secret-id maison-hygia/${Environment}/cognito --region $REGION --query SecretString --output text)
+            COGNITO_USER_POOL_ID=$(echo "$COG_SECRET" | python3 -c "import sys,json; print(json.load(sys.stdin)['COGNITO_USER_POOL_ID'])")
+            COGNITO_APP_CLIENT_ID=$(echo "$COG_SECRET" | python3 -c "import sys,json; print(json.load(sys.stdin)['COGNITO_APP_CLIENT_ID'])")
+
+            CORS=$(aws ssm get-parameter --name /maison-hygia/${Environment}/CORS_ORIGINS --region $REGION --query Parameter.Value --output text)
+            LOG_LEVEL=$(aws ssm get-parameter --name /maison-hygia/${Environment}/LOG_LEVEL --region $REGION --query Parameter.Value --output text)
+            S3_ASSETS_BUCKET=$(aws ssm get-parameter --name /maison-hygia/${Environment}/S3_ASSETS_BUCKET --region $REGION --query Parameter.Value --output text)
+            CF_ASSETS_DOMAIN=$(aws ssm get-parameter --name /maison-hygia/${Environment}/CF_ASSETS_DOMAIN --region $REGION --query Parameter.Value --output text)
+
+            aws ecr get-login-password --region $REGION | docker login --username AWS --password-stdin $REPO
+            docker pull $IMAGE
+
+            docker rm -f maison-hygia 2>/dev/null || true
+            docker run -d --name maison-hygia --restart unless-stopped -p 8001:8001 \
+              -e DATABASE_URL="$DATABASE_URL" \
+              -e COGNITO_USER_POOL_ID="$COGNITO_USER_POOL_ID" \
+              -e COGNITO_APP_CLIENT_ID="$COGNITO_APP_CLIENT_ID" \
+              -e AWS_REGION=$REGION \
+              -e S3_ASSETS_BUCKET=$S3_ASSETS_BUCKET \
+              -e CF_ASSETS_DOMAIN=$CF_ASSETS_DOMAIN \
+              -e ALLOWED_ORIGINS="$CORS" \
+              -e LOG_LEVEL=$LOG_LEVEL \
+              -e AUTO_CREATE_SCHEMA=false \
+              $IMAGE
+            echo USER_DATA_DONE
+  AutoScalingGroup:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      AutoScalingGroupName: !Sub maison-hygia-${Environment}-asg
+      LaunchTemplate:
+        LaunchTemplateId: !Ref LaunchTemplate
+        Version: !GetAtt LaunchTemplate.LatestVersionNumber
+      MinSize: 1
+      MaxSize: 5
+      DesiredCapacity: 1
+      VPCZoneIdentifier:
+        - !Ref AppSubnetA
+        - !Ref AppSubnetB
+      TargetGroupARNs:
+        - !Ref TargetGroup
+      HealthCheckType: ELB
+      HealthCheckGracePeriod: 300
+      Tags:
+        - Key: Name
+          Value: !Sub maison-hygia-${Environment}-asg
+          PropagateAtLaunch: true
+        - Key: Project
+          Value: Maison-Hygia
+          PropagateAtLaunch: true
+        - Key: Environment
+          Value: !Ref Environment
+          PropagateAtLaunch: true
+  ScalingPolicy:
+    Type: AWS::AutoScaling::ScalingPolicy
+    Properties:
+      AutoScalingGroupName: !Ref AutoScalingGroup
+      PolicyType: TargetTrackingScaling
+      TargetTrackingConfiguration:
+        PredefinedMetricSpecification:
+          PredefinedMetricType: ASGAverageCPUUtilization
+        TargetValue: 60.0
+  # ---------------------------------------------------------------- CloudFront
+  CloudFrontOAC:
+    Type: AWS::CloudFront::OriginAccessControl
+    Properties:
+      OriginAccessControlConfig:
+        Name: !Sub maison-hygia-${Environment}-oac
+        Description: Origin Access Control for Maison Hygia S3 origins
+        SigningProtocol: sigv4
+        SigningBehavior: always
+        OriginAccessControlOriginType: s3
+  CloudFrontWebDistribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Comment: Maison Hygia customer web distribution
+        DefaultRootObject: index.html
+        Enabled: true
+        HttpVersion: http2and3
+        IPV6Enabled: true
+        PriceClass: PriceClass_100
+        Origins:
+          - Id: web-s3
+            DomainName: !GetAtt S3WebBucket.RegionalDomainName
+            OriginPath: ""
+            S3OriginConfig:
+              OriginAccessIdentity: ""
+            ConnectionAttempts: 3
+            ConnectionTimeout: 10
+            OriginAccessControlId: !Ref CloudFrontOAC
+          - Id: api-alb
+            DomainName: !GetAtt LoadBalancer.DNSName
+            OriginPath: ""
+            CustomOriginConfig:
+              HTTPPort: 80
+              HTTPSPort: 443
+              OriginProtocolPolicy: http-only
+              OriginSSLProtocols:
+                - TLSv1.2
+                - TLSv1.1
+                - TLSv1
+              OriginReadTimeout: 30
+              OriginKeepaliveTimeout: 5
+        DefaultCacheBehavior:
+          TargetOriginId: web-s3
+          ViewerProtocolPolicy: redirect-to-https
+          Compress: true
+          CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6
+          AllowedMethods:
+            - GET
+            - HEAD
+            - OPTIONS
+          CachedMethods:
+            - GET
+            - HEAD
+        CacheBehaviors:
+          - PathPattern: /api/*
+            TargetOriginId: api-alb
+            ViewerProtocolPolicy: redirect-to-https
+            Compress: false
+            CachePolicyId: 4135ea2d-6df8-44a3-9df3-4b5a84be39ad
+            OriginRequestPolicyId: 216adef6-5c7f-47e4-b989-5492eafa07d3
+            AllowedMethods:
+              - GET
+              - HEAD
+              - OPTIONS
+              - PUT
+              - POST
+              - PATCH
+              - DELETE
+            CachedMethods:
+              - GET
+              - HEAD
+          - PathPattern: /cart*
+            TargetOriginId: api-alb
+            ViewerProtocolPolicy: redirect-to-https
+            Compress: false
+            CachePolicyId: 4135ea2d-6df8-44a3-9df3-4b5a84be39ad
+            OriginRequestPolicyId: 216adef6-5c7f-47e4-b989-5492eafa07d3
+            AllowedMethods:
+              - GET
+              - HEAD
+              - OPTIONS
+              - PUT
+              - POST
+              - PATCH
+              - DELETE
+            CachedMethods:
+              - GET
+              - HEAD
+          - PathPattern: /payment*
+            TargetOriginId: api-alb
+            ViewerProtocolPolicy: redirect-to-https
+            Compress: false
+            CachePolicyId: 4135ea2d-6df8-44a3-9df3-4b5a84be39ad
+            OriginRequestPolicyId: 216adef6-5c7f-47e4-b989-5492eafa07d3
+            AllowedMethods:
+              - GET
+              - HEAD
+              - OPTIONS
+              - PUT
+              - POST
+              - PATCH
+              - DELETE
+            CachedMethods:
+              - GET
+              - HEAD
+        CustomErrorResponses:
+          - ErrorCode: 403
+            ResponsePagePath: /index.html
+            ResponseCode: "200"
+            ErrorCachingMinTTL: 10
+          - ErrorCode: 404
+            ResponsePagePath: /index.html
+            ResponseCode: "200"
+            ErrorCachingMinTTL: 10
+        ViewerCertificate:
+          CloudFrontDefaultCertificate: true
+          MinimumProtocolVersion: TLSv1.2_2021
+  CloudFrontAdminDistribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Comment: Maison Hygia admin dashboard distribution
+        DefaultRootObject: index.html
+        Enabled: true
+        HttpVersion: http2and3
+        IPV6Enabled: true
+        PriceClass: PriceClass_100
+        Origins:
+          - Id: admin-s3
+            DomainName: !GetAtt S3AdminBucket.RegionalDomainName
+            OriginPath: ""
+            S3OriginConfig:
+              OriginAccessIdentity: ""
+            ConnectionAttempts: 3
+            ConnectionTimeout: 10
+            OriginAccessControlId: !Ref CloudFrontOAC
+        DefaultCacheBehavior:
+          TargetOriginId: admin-s3
+          ViewerProtocolPolicy: redirect-to-https
+          Compress: true
+          CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6
+          AllowedMethods:
+            - GET
+            - HEAD
+            - OPTIONS
+          CachedMethods:
+            - GET
+            - HEAD
+        CustomErrorResponses:
+          - ErrorCode: 403
+            ResponsePagePath: /index.html
+            ResponseCode: "200"
+            ErrorCachingMinTTL: 10
+          - ErrorCode: 404
+            ResponsePagePath: /index.html
+            ResponseCode: "200"
+            ErrorCachingMinTTL: 10
+        ViewerCertificate:
+          CloudFrontDefaultCertificate: true
+          MinimumProtocolVersion: TLSv1.2_2021
+  CloudFrontAssetsDistribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Comment: Maison Hygia product assets CDN distribution
+        DefaultRootObject: ""
+        Enabled: true
+        HttpVersion: http2and3
+        IPV6Enabled: true
+        PriceClass: PriceClass_100
+        Origins:
+          - Id: assets-s3
+            DomainName: !GetAtt S3AssetsBucket.RegionalDomainName
+            OriginPath: ""
+            S3OriginConfig:
+              OriginAccessIdentity: ""
+            ConnectionAttempts: 3
+            ConnectionTimeout: 10
+            OriginAccessControlId: !Ref CloudFrontOAC
+        DefaultCacheBehavior:
+          TargetOriginId: assets-s3
+          ViewerProtocolPolicy: redirect-to-https
+          Compress: true
+          CachePolicyId: b2884449-e4de-46a7-ac36-70bc7f1ddd6d
+          AllowedMethods:
+            - GET
+            - HEAD
+            - OPTIONS
+          CachedMethods:
+            - GET
+            - HEAD
+        ViewerCertificate:
+          CloudFrontDefaultCertificate: true
+          MinimumProtocolVersion: TLSv1.2_2021
+  # ---------------------------------------------------------------- Monitoring
+  LogGroupApp:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /aws/ec2/maison-hygia/app
+      RetentionInDays: 30
+  LogGroupAccess:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /aws/ec2/maison-hygia/access
+      RetentionInDays: 30
+  LogMetricFilterErrors:
+    Type: AWS::Logs::MetricFilter
+    Properties:
+      LogGroupName: !Ref LogGroupApp
+      FilterName: maison-hygia-errors
+      FilterPattern: '{ $.level = "ERROR" }'
+      MetricTransformations:
+        - MetricName: AppErrorCount
+          MetricNamespace: MaisonHygia
+          MetricValue: "1"
+  AlertTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: maison-hygia-alerts
+  AlertSubscription:
+    Type: AWS::SNS::Subscription
+    Properties:
+      TopicArn: !Ref AlertTopic
+      Protocol: email
+      Endpoint: !Ref AlertEmail
+  AlarmAlb5xx:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: maison-hygia-alb-5xx
+      AlarmDescription: ALB target 5XX errors
+      Namespace: AWS/ApplicationELB
+      MetricName: HTTPCode_Target_5XX_Count
+      Statistic: Sum
+      Period: 60
+      EvaluationPeriods: 5
+      Threshold: 0
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+        - Name: LoadBalancer
+          Value: !GetAtt LoadBalancer.LoadBalancerFullName
+      AlarmActions:
+        - !Ref AlertTopic
+  AlarmRdsCpu:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: maison-hygia-rds-cpu
+      AlarmDescription: RDS CPU high
+      Namespace: AWS/RDS
+      MetricName: CPUUtilization
+      Statistic: Average
+      Period: 300
+      EvaluationPeriods: 3
+      Threshold: 80
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+        - Name: DBInstanceIdentifier
+          Value: !Ref RDSInstance
+      AlarmActions:
+        - !Ref AlertTopic
+  AlarmRdsStorage:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: maison-hygia-rds-storage
+      AlarmDescription: RDS free storage low
+      Namespace: AWS/RDS
+      MetricName: FreeStorageSpace
+      Statistic: Average
+      Period: 300
+      EvaluationPeriods: 3
+      Threshold: 10737418240
+      ComparisonOperator: LessThanThreshold
+      Dimensions:
+        - Name: DBInstanceIdentifier
+          Value: !Ref RDSInstance
+      AlarmActions:
+        - !Ref AlertTopic
+  AlarmAsgCapacity:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: maison-hygia-asg-capacity
+      AlarmDescription: No healthy in-service instances
+      Namespace: AWS/AutoScaling
+      MetricName: GroupInServiceInstances
+      Statistic: Minimum
+      Period: 300
+      EvaluationPeriods: 3
+      Threshold: 1
+      ComparisonOperator: LessThanThreshold
+      Dimensions:
+        - Name: AutoScalingGroupName
+          Value: !Ref AutoScalingGroup
+      AlarmActions:
+        - !Ref AlertTopic
+  AlarmAppErrors:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: maison-hygia-app-errors
+      AlarmDescription: Backend ERROR log spike
+      Namespace: MaisonHygia
+      MetricName: AppErrorCount
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: 20
+      ComparisonOperator: GreaterThanThreshold
+      AlarmActions:
+        - !Ref AlertTopic
+  Dashboard:
+    Type: AWS::CloudWatch::Dashboard
+    Properties:
+      DashboardName: !Sub MaisonHygia-${Environment}
+      DashboardBody: !Sub |
+        {
+          "widgets": [
+            { "type": "metric", "properties": { "view": "timeSeries", "region": "${Region}", "title": "ALB Requests", "metrics": [ [ "AWS/ApplicationELB", "RequestCount", "LoadBalancer", "${LoadBalancer.LoadBalancerFullName}", { "stat": "Sum" } ] ] } },
+            { "type": "metric", "properties": { "view": "timeSeries", "region": "${Region}", "title": "ALB 5XX", "metrics": [ [ "AWS/ApplicationELB", "HTTPCode_Target_5XX_Count", "LoadBalancer", "${LoadBalancer.LoadBalancerFullName}", { "stat": "Sum" } ] ] } },
+            { "type": "metric", "properties": { "view": "timeSeries", "region": "${Region}", "title": "EC2 CPU", "metrics": [ [ "AWS/EC2", "CPUUtilization", "AutoScalingGroupName", "${AutoScalingGroup}", { "stat": "Average" } ] ] } },
+            { "type": "metric", "properties": { "view": "timeSeries", "region": "${Region}", "title": "RDS CPU", "metrics": [ [ "AWS/RDS", "CPUUtilization", "DBInstanceIdentifier", "${RDSInstance}", { "stat": "Average" } ] ] } },
+            { "type": "metric", "properties": { "view": "timeSeries", "region": "${Region}", "title": "App Errors", "metrics": [ [ "MaisonHygia", "AppErrorCount", { "stat": "Sum" } ] ] } }
+          ]
+        }
+
+Outputs:
+  ALBDnsName:
+    Description: ALB DNS name (API endpoint)
+    Value: !GetAtt LoadBalancer.DNSName
+  CloudFrontWebDomain:
+    Description: Customer website (CloudFront default domain)
+    Value: !GetAtt CloudFrontWebDistribution.DomainName
+  CloudFrontAdminDomain:
+    Description: Admin dashboard (CloudFront default domain)
+    Value: !GetAtt CloudFrontAdminDistribution.DomainName
+  CloudFrontAssetsDomain:
+    Description: Product image CDN (CloudFront default domain)
+    Value: !GetAtt CloudFrontAssetsDistribution.DomainName
+  RdsEndpoint:
+    Description: RDS PostgreSQL endpoint
+    Value: !GetAtt RDSInstance.Endpoint.Address
+  CognitoUserPoolId:
+    Description: Cognito user pool ID
+    Value: !Ref CognitoUserPool
+  CognitoSpaClientId:
+    Description: Cognito SPA (PKCE) client ID
+    Value: !Ref CognitoSpaClient
+  ECRRepositoryUri:
+    Description: Backend ECR repository URI
+    Value: !Sub ${AWS::AccountId}.dkr.ecr.${Region}.amazonaws.com/maison-hygia/backend
+  S3WebBucket:
+    Value: !Ref S3WebBucket
+  S3AdminBucket:
+    Value: !Ref S3AdminBucket
+  S3AssetsBucket:
+    Value: !Ref S3AssetsBucket
