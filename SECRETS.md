@@ -13,8 +13,8 @@ CLI build are marked **[DONE]**; blank/placeholder ones are **TODO — you must 
 | Variable | Status | Value / where to get it |
 |---|---|---|
 | `DATABASE_URL` | **TODO** | `postgresql://user:pw@host:5432/maison_hygia` (local) — or the RDS URL from Secrets Manager for prod |
-| `STRIPE_SECRET_KEY` | **TODO** | Stripe dashboard → `sk_test_...` (test) / `sk_live_...` (live) |
-| `STRIPE_WEBHOOK_SECRET` | **TODO** | Stripe dashboard → webhook signing secret `whsec_...` |
+| `RAZORPAY_API_KEY` | **TODO** | Razorpay dashboard → API Key (`rzp_test_...` / `rzp_live_...`) |
+| `RAZORPAY_API_SECRET` | **TODO** | Razorpay dashboard → API Secret (used for webhook HMAC-SHA256 verification and refunds) |
 | `COGNITO_USER_POOL_ID` | **[DONE]** | `ap-south-1_RVeefRjjt` |
 | `COGNITO_APP_CLIENT_ID` | **[DONE]** | `31iq2cmvv4i8tplpj00f0pfkl2` |
 | `AWS_REGION` | **[DONE]** | `ap-south-1` |
@@ -36,14 +36,14 @@ Created by the build with placeholder values; replace the TODO ones in the conso
 |---|---|---|
 | `maison-hygia/prod/database` | `DATABASE_URL` (real RDS URL incl. password) | **[DONE]** |
 | `maison-hygia/prod/cognito` | `COGNITO_USER_POOL_ID`, `COGNITO_APP_CLIENT_ID`, `COGNITO_CLIENT_ID` | **[DONE]** |
-| `maison-hygia/prod/stripe` | `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET` | **TODO** — real Stripe keys |
+| `maison-hygia/prod/razorpay` | `RAZORPAY_API_KEY`, `RAZORPAY_API_SECRET` | **TODO** — real Razorpay keys |
 | `maison-hygia/prod/sendgrid` | `SENDGRID_API_KEY`, `SMTP_HOST`, `SMTP_PORT`, `SMTP_FROM` | **TODO** — SendGrid SMTP (only needed if you switch Cognito from default email) |
 
 Update example:
 
 ```bash
-aws secretsmanager update-secret --secret-id maison-hygia/prod/stripe \
-  --secret-string '{"STRIPE_SECRET_KEY":"sk_test_xxx","STRIPE_WEBHOOK_SECRET":"whsec_xxx"}' \
+aws secretsmanager update-secret --secret-id maison-hygia/prod/razorpay \
+  --secret-string '{"RAZORPAY_API_KEY":"rzp_test_xxx","RAZORPAY_API_SECRET":"rzp_secret_xxx"}' \
   --region ap-south-1
 ```
 
@@ -113,15 +113,15 @@ All values are in `infra/cloudformation/STACK_RECORDS.md`. Create the OIDC role 
 | Item | Value | Status |
 |---|---|---|
 | SNS topic `maison-hygia-alerts` email | `maison-hygia-alerts@example.com` | **TODO** — replace with your real email and confirm the subscription |
-| Stripe webhook URL | `https://api.maisonhygia.adityanair.tech/payment/webhook` (event: `checkout.session.completed`) | **TODO** — configure in Stripe dashboard once DNS exists |
+| Razorpay webhook URL | `https://api.maisonhygia.adityanair.tech/payment/webhook` (event: `payment.captured`) | **TODO** — configure in Razorpay dashboard once DNS exists |
 
 ---
 
 ## Priority order to get the project fully working
 
-1. **Local:** real `STRIPE_SECRET_KEY`/`STRIPE_WEBHOOK_SECRET` in `.env`; set `ALLOWED_ORIGINS` for the admin port.
-2. **AWS:** real Stripe values in Secrets Manager `maison-hygia/prod/stripe`.
+1. **Local:** real `RAZORPAY_API_KEY`/`RAZORPAY_API_SECRET` in `.env`; set `ALLOWED_ORIGINS` for the admin port.
+2. **AWS:** real Razorpay values in Secrets Manager `maison-hygia/prod/razorpay`.
 3. **Admin dashboard:** fix meta tags + `auth.js` callback parsing.
 4. **DNS:** validate the ACM cert, create Route 53 zone + records, add ALB HTTPS listener.
 5. **CI/CD:** create the OIDC role + set the 11 GitHub secrets.
-6. **Ops:** confirm the SNS email; set the Stripe webhook URL.
+6. **Ops:** confirm the SNS email; set the Razorpay webhook URL.

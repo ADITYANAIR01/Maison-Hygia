@@ -39,13 +39,13 @@ Parameters:
     Type: String
     Default: maison-hygia-alerts@example.com
     Description: SNS alarm notification email (must be confirmed in the inbox).
-  StripeSecretKey:
+  RazorpayApiKey:
     Type: String
-    Default: sk_test_PLACEHOLDER
+    Default: rzp_test_PLACEHOLDER
     NoEcho: true
-  StripeWebhookSecret:
+  RazorpayApiSecret:
     Type: String
-    Default: whsec_PLACEHOLDER
+    Default: razorpay_secret_PLACEHOLDER
     NoEcho: true
   SendGridApiKey:
     Type: String
@@ -614,11 +614,11 @@ Resources:
     Properties:
       Name: !Sub maison-hygia/${Environment}/database
       SecretString: !Sub '{"DATABASE_URL":"postgresql://${DbMasterUsername}:${DbMasterPassword}@${RDSInstance.Endpoint.Address}:5432/maisonhygia"}'
-  SecretStripe:
+  SecretRazorpay:
     Type: AWS::SecretsManager::Secret
     Properties:
-      Name: !Sub maison-hygia/${Environment}/stripe
-      SecretString: !Sub '{"STRIPE_SECRET_KEY":"${StripeSecretKey}","STRIPE_WEBHOOK_SECRET":"${StripeWebhookSecret}"}'
+      Name: !Sub maison-hygia/${Environment}/razorpay
+      SecretString: !Sub '{"RAZORPAY_API_KEY":"${RazorpayApiKey}","RAZORPAY_API_SECRET":"${RazorpayApiSecret}"}'
   SecretSendgrid:
     Type: AWS::SecretsManager::Secret
     Properties:

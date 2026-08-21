@@ -32,7 +32,7 @@ verified end-to-end on 2026-08-20 and is still live in **ap-south-1** (account `
 | Target group | `maison-hygia-tg` (`/health`, 30s/5s, healthy 2 / unhealthy 3) |
 | Launch template | `lt-0b72226135739083f` (v2 default; t3.medium, AL2023) |
 | Auto Scaling group | `maison-hygia-prod-asg` (Min=1 / Desired=1 / Max=5; target-tracking CPU 60%) |
-| Secrets Manager | `maison-hygia/prod/{database,stripe,cognito,sendgrid}` |
+| Secrets Manager | `maison-hygia/prod/{database,razorpay,cognito,sendgrid}` |
 | Parameter Store | `/maison-hygia/prod/{CORS_ORIGINS,LOG_LEVEL,S3_ASSETS_BUCKET,CF_ASSETS_DOMAIN,COGNITO_USER_POOL_ID,COGNITO_APP_CLIENT_ID,AWS_REGION}` |
 | CloudWatch | log groups `/aws/ec2/maison-hygia/{app,access}`, SNS `maison-hygia-alerts`, 5 alarms, dashboard `MaisonHygia-Prod` |
 | ACM (pending validation) | `arn:aws:acm:us-east-1:121490076448:certificate/21a797cb-1bb0-41b8-aed4-31e49509531d` — `*.maisonhygia.adityanair.tech` |
@@ -67,12 +67,12 @@ Notes:
 - Bucket names in the template are suffixed with the account ID to stay globally unique; the manual build used unsuffixed names.
 - The template ships with the ALB on **HTTP:80** and CloudFront on the default `cloudfront.net` domains, matching the current manual build. Adding the custom domains requires the `*.maisonhygia.adityanair.tech` ACM cert (us-east-1, currently PENDING_VALIDATION) plus Route 53 records — DNS was intentionally skipped in this run.
 - `CognitoUserPoolDomain` uses the `maison-hygia-<env>` domain alias; the manual build used `maison-hygia-auth`.
-- Secrets use placeholder values from the stack parameters (`DbMasterPassword`, `StripeSecretKey`, `StripeWebhookSecret`, `SendGridApiKey`); replace them after deploy.
+- Secrets use placeholder values from the stack parameters (`DbMasterPassword`, `RazorpayApiKey`, `RazorpayApiSecret`, `SendGridApiKey`); replace them after deploy.
 
 ## Remaining post-build steps (documented, not executed)
 
 1. Validate the ACM wildcard cert via DNS at the `adityanair.tech` registrar, then:
    - point Route 53 records at the CloudFront distributions / ALB / Cognito domain,
    - attach the cert to CloudFront (Web/Admin/Assets) and add an HTTPS:443 listener on the ALB.
-2. Confirm the SNS subscription email and set the real Stripe/SendGrid secrets in Secrets Manager.
+2. Confirm the SNS subscription email and set the real Razorpay/SendGrid secrets in Secrets Manager.
 3. (Optional) Wire the GitHub Actions OIDC role + repo secrets so the `deploy-*.yml` workflows run.

@@ -1,6 +1,5 @@
 from datetime import datetime, timedelta, timezone
 
-import stripe
 from fastapi import APIRouter, Body, Depends, HTTPException, Request
 from pydantic import BaseModel
 from sqlalchemy import func, select
@@ -8,10 +7,14 @@ from sqlalchemy.orm import Session, selectinload
 
 from . import models
 from .config import settings
-from .database import FRONTEND_URL, SessionLocal
+from .database import SessionLocal
 from .orders import create_order_from_cart
-
-stripe.api_key = settings.STRIPE_SECRET_KEY
+from .payments import (
+    create_order,
+    fetch_order,
+    verify_payment_signature,
+    verify_webhook_signature,
+)
 
 
 def get_db():
@@ -112,10 +115,6 @@ def retrieve_product(product_id: int, db: Session = Depends(get_db)):
 
 # --- Cart router ---
 cart_router = APIRouter(prefix="/cart", tags=["cart"])
-
-
-class CreateCheckoutSessionBody(BaseModel):
-    session_id: str
 
 
 @cart_router.get("/", summary="View cart")
@@ -255,110 +254,137 @@ def remove_from_cart(
 payment_router = APIRouter(prefix="/payment", tags=["payment"])
 
 
-@payment_router.post(
-    "/create-checkout-session", summary="Create Stripe checkout session"
-)
-def create_checkout_session(
-    body: CreateCheckoutSessionBody = Body(...),
+class CreateOrderBody(BaseModel):
+    session_id: str
+    email: str | None = None
+    name: str | None = None
+
+
+class VerifyPaymentBody(BaseModel):
+    razorpay_order_id: str
+    razorpay_payment_id: str
+    razorpay_signature: str
+    session_id: str
+    email: str | None = None
+    name: str | None = None
+
+
+@payment_router.post("/create-order", summary="Create a Razorpay order")
+def create_payment_order(
+    body: CreateOrderBody = Body(...),
     db: Session = Depends(get_db),
 ):
-    """Create a Stripe checkout session for the cart."""
-    session_id = body.session_id
-
-    # Get cart
+    """Create a Razorpay order for the cart and return its id + key for Checkout.js."""
     cart = db.execute(
-        select(models.Cart).where(models.Cart.session_id == session_id)
+        select(models.Cart).where(models.Cart.session_id == body.session_id)
     ).scalar_one_or_none()
-
     if not cart:
         raise HTTPException(status_code=404, detail="Cart not found")
 
-    # Get cart items
     items = (
         db.execute(select(models.CartItem).where(models.CartItem.cart_id == cart.id))
         .scalars()
         .all()
     )
-
     if not items:
         raise HTTPException(status_code=400, detail="Cart is empty")
 
-    line_items = []
+    amount = 0
     for item in items:
         variant = db.get(models.Variant, item.variant_id)
         if not variant:
             raise HTTPException(
                 status_code=404, detail=f"Variant {item.variant_id} not found"
             )
+        amount += int(float(variant.price) * 100) * item.quantity
 
-        line_items.append(
-            {
-                "price_data": {
-                    "currency": "usd",
-                    "product_data": {
-                        "name": variant.product.name,
-                        "description": variant.product.description or "",
-                    },
-                    "unit_amount": int(float(variant.price) * 100),
-                },
-                "quantity": item.quantity,
-            }
-        )
+    currency = settings.PAYMENT_CURRENCY
+    receipt = f"mh_{body.session_id}"
+    notes = {"session_id": body.session_id}
+    if body.email:
+        notes["email"] = body.email
+    if body.name:
+        notes["name"] = body.name
 
-    if not stripe.api_key:
-        raise HTTPException(status_code=503, detail="Stripe API key not configured")
+    razorpay_order = create_order(amount, currency, receipt, notes)
 
-    checkout_session = stripe.checkout.Session.create(
-        payment_method_types=["card"],
-        line_items=line_items,
-        mode="payment",
-        metadata={"session_id": session_id},
-        success_url=f"{FRONTEND_URL}/checkout/success?session_id={{CHECKOUT_SESSION_ID}}",
-        cancel_url=f"{FRONTEND_URL}/checkout/cancel",
+    return {
+        "order_id": razorpay_order["id"],
+        "amount": razorpay_order["amount"],
+        "currency": razorpay_order["currency"],
+        "razorpay_key_id": settings.RAZORPAY_API_KEY,
+        "session_id": body.session_id,
+    }
+
+
+@payment_router.post("/verify", summary="Verify a Razorpay payment")
+def verify_payment(
+    body: VerifyPaymentBody = Body(...),
+    db: Session = Depends(get_db),
+):
+    """Verify the Checkout.js return signature and create the order."""
+    verify_payment_signature(
+        body.razorpay_order_id, body.razorpay_payment_id, body.razorpay_signature
     )
 
-    return {"checkout_url": checkout_session.url}
+    cart = db.execute(
+        select(models.Cart)
+        .options(selectinload(models.Cart.items).selectinload(models.CartItem.variant))
+        .where(models.Cart.session_id == body.session_id)
+    ).scalar_one_or_none()
+    if not cart:
+        raise HTTPException(status_code=404, detail="Cart not found")
+
+    razorpay_order = fetch_order(body.razorpay_order_id)
+    customer = {"email": body.email, "name": body.name}
+    order = create_order_from_cart(
+        db,
+        cart,
+        razorpay_order,
+        payment_id=body.razorpay_payment_id,
+        customer=customer,
+    )
+
+    return {
+        "order_id": order.id,
+        "razorpay_order_id": order.razorpay_order_id,
+        "status": order.status,
+    }
 
 
-@payment_router.post("/webhook", summary="Stripe webhook handler")
-async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
-    """Handle Stripe webhook events and create orders for paid sessions."""
+@payment_router.post("/webhook", summary="Razorpay webhook handler")
+async def razorpay_webhook(request: Request, db: Session = Depends(get_db)):
+    """Handle Razorpay webhook events and create orders for captured payments."""
     payload = await request.body()
-    sig_header = request.headers.get("stripe-signature")
-    event = None
+    signature = request.headers.get("x-razorpay-signature")
+    verify_webhook_signature(payload, signature)
 
-    webhook_secret = settings.STRIPE_WEBHOOK_SECRET
-    if not webhook_secret:
-        raise HTTPException(
-            status_code=503, detail="Stripe webhook secret not configured"
-        )
+    import json
 
-    try:
-        event = stripe.Webhook.construct_event(payload, sig_header, webhook_secret)
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=f"Invalid payload: {e!s}")
-    except stripe.error.SignatureVerificationError as e:
-        raise HTTPException(status_code=400, detail=f"Invalid signature: {e!s}")
+    event = json.loads(payload or b"{}")
+    if event.get("event") != "payment.captured":
+        return {"status": "ignored"}
 
-    # Handle the checkout.session.completed event
-    if event.type == "checkout.session.completed":
-        session = event.data.object
-        session_id = (session.get("metadata") or {}).get("session_id")
+    entity = (event.get("payload") or {}).get("payment", {}).get("entity", {})
+    session_id = (entity.get("notes") or {}).get("session_id")
+    cart = None
+    if session_id:
+        cart = db.execute(
+            select(models.Cart)
+            .options(
+                selectinload(models.Cart.items).selectinload(models.CartItem.variant)
+            )
+            .where(models.Cart.session_id == session_id)
+        ).scalar_one_or_none()
 
-        cart = None
-        if session_id:
-            cart = db.execute(
-                select(models.Cart)
-                .options(
-                    selectinload(models.Cart.items).selectinload(
-                        models.CartItem.variant
-                    )
-                )
-                .where(models.Cart.session_id == session_id)
-            ).scalar_one_or_none()
-
-        if cart:
-            create_order_from_cart(db, cart, session)
+    if cart:
+        razorpay_order = {
+            "id": entity.get("order_id"),
+            "amount": entity.get("amount", 0),
+            "currency": entity.get("currency", settings.PAYMENT_CURRENCY),
+            "notes": entity.get("notes", {}),
+        }
+        create_order_from_cart(db, cart, razorpay_order, payment_id=entity.get("id"))
 
     return {"status": "success"}
 
@@ -376,7 +402,7 @@ def confirm_order(
     order = db.execute(
         select(models.Order)
         .options(selectinload(models.Order.items))
-        .where(models.Order.stripe_session_id == session_id)
+        .where(models.Order.razorpay_order_id == session_id)
     ).scalar_one_or_none()
 
     if not order:

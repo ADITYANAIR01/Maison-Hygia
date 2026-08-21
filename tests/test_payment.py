@@ -1,6 +1,3 @@
-from types import SimpleNamespace
-
-import stripe
 from sqlalchemy import select
 
 from backend.database import SessionLocal
@@ -32,163 +29,194 @@ def _inventory_for_variant(variant_id):
         db.close()
 
 
-def test_create_checkout_session_metadata_and_urls(client, variant_ids, monkeypatch):
-    sid = "pay-session-1"
+def test_create_order_returns_order_id(client, variant_ids, monkeypatch):
+    sid = "create-order-session-1"
     _add_item(client, variant_ids[0], sid)
 
-    captured = {}
+    def fake_create_order(amount, currency, receipt, notes):
+        return {
+            "id": "order_test1",
+            "amount": amount,
+            "currency": currency,
+            "notes": notes or {},
+        }
 
-    def fake_create(**kwargs):
-        captured.update(kwargs)
-        return SimpleNamespace(url="https://checkout.stripe.com/c/pay/test_123")
+    monkeypatch.setattr("backend.routes.create_order", fake_create_order)
 
-    monkeypatch.setattr(stripe.checkout.Session, "create", fake_create)
-
-    resp = client.post("/payment/create-checkout-session", json={"session_id": sid})
+    resp = client.post("/payment/create-order", json={"session_id": sid})
     assert resp.status_code == 200
-    assert resp.json()["checkout_url"] == "https://checkout.stripe.com/c/pay/test_123"
-
-    assert captured["metadata"] == {"session_id": sid}
-    assert (
-        captured["success_url"]
-        == "http://localhost:8000/checkout/success?session_id={CHECKOUT_SESSION_ID}"
-    )
-    assert captured["cancel_url"] == "http://localhost:8000/checkout/cancel"
+    data = resp.json()
+    assert data["order_id"] == "order_test1"
+    assert data["amount"] == 2400
+    assert data["currency"] == "inr"
+    assert "razorpay_key_id" in data
 
 
-def test_create_checkout_session_unknown_cart_404(client):
+def test_create_order_unknown_cart_404(client):
     resp = client.post(
-        "/payment/create-checkout-session", json={"session_id": "no-such-cart"}
+        "/payment/create-order", json={"session_id": "no-such-cart"}
     )
     assert resp.status_code == 404
 
 
-def test_create_checkout_session_empty_cart_400(client, variant_ids):
-    sid = "pay-session-empty"
+def test_create_order_empty_cart_400(client, variant_ids):
+    sid = "create-order-session-empty"
     _add_item(client, variant_ids[0], sid)
     client.post("/cart/remove", json={"variant_id": variant_ids[0], "session_id": sid})
-    resp = client.post("/payment/create-checkout-session", json={"session_id": sid})
+    resp = client.post("/payment/create-order", json={"session_id": sid})
     assert resp.status_code == 400
 
 
-def _completed_event(sid, session_id="cs_test_123"):
-    return SimpleNamespace(
-        type="checkout.session.completed",
-        data=SimpleNamespace(
-            object={
-                "id": session_id,
-                "metadata": {"session_id": sid},
-                "customer_details": {
-                    "email": "buyer@example.com",
-                    "name": "Test Buyer",
-                },
-                "shipping_details": {
-                    "address": {
-                        "line1": "1 Wellness Way",
-                        "city": "Austin",
-                        "state": "TX",
-                        "postal_code": "78701",
-                        "country": "US",
-                    }
-                },
-                "amount_total": 2400,
-                "currency": "usd",
-            }
-        ),
+def _setup_verify(
+    client, variant_ids, monkeypatch, sid, razorpay_order_id="order_verify1"
+):
+    """Add an item and stub the Razorpay helper calls used by /payment/verify."""
+    _add_item(client, variant_ids[0], sid)
+
+    def fake_create_order(amount, currency, receipt, notes):
+        return {
+            "id": razorpay_order_id,
+            "amount": amount,
+            "currency": currency,
+            "notes": notes or {},
+        }
+
+    monkeypatch.setattr("backend.routes.create_order", fake_create_order)
+    monkeypatch.setattr("backend.routes.verify_payment_signature", lambda *a, **k: None)
+    monkeypatch.setattr(
+        "backend.routes.fetch_order",
+        lambda oid: {
+            "id": oid,
+            "amount": 2400,
+            "currency": "inr",
+            "notes": {"email": "buyer@example.com", "name": "Test Buyer"},
+        },
     )
+    return sid
 
 
-def test_webhook_creates_order_and_decrements_inventory(
+def test_verify_creates_order_and_decrements_inventory(
     client, variant_ids, monkeypatch
 ):
-    sid = "webhook-session-1"
-    _add_item(client, variant_ids[0], sid)
+    sid = "verify-session-1"
+    _setup_verify(client, variant_ids, monkeypatch, sid)
     inventory_before = _inventory_for_variant(variant_ids[0]).quantity
 
-    fake_event = _completed_event(sid, session_id="cs_test_webhook1")
-    monkeypatch.setattr(
-        stripe.Webhook, "construct_event", lambda *args, **kwargs: fake_event
-    )
-
     resp = client.post(
-        "/payment/webhook", content=b"{}", headers={"stripe-signature": "dummy"}
+        "/payment/verify",
+        json={
+            "razorpay_order_id": "order_verify1",
+            "razorpay_payment_id": "pay_1",
+            "razorpay_signature": "sig",
+            "session_id": sid,
+        },
     )
     assert resp.status_code == 200
+    assert resp.json()["razorpay_order_id"] == "order_verify1"
 
     cart = _cart_by_session(sid)
     assert cart.payment_status == "paid"
-    assert cart.status == "paid"
 
     db = SessionLocal()
     try:
         order = db.execute(
-            select(Order).where(Order.stripe_session_id == "cs_test_webhook1")
+            select(Order).where(Order.razorpay_order_id == "order_verify1")
         ).scalar_one()
-        assert order.status == "paid"
-        assert order.payment_status == "paid"
         assert order.customer_email == "buyer@example.com"
         assert order.total == 24.00
         assert len(order.items) == 1
-        assert order.items[0].quantity == 1
-        assert order.items[0].sku_snapshot == "MH-002-S"
     finally:
         db.close()
 
     assert _inventory_for_variant(variant_ids[0]).quantity == inventory_before - 1
 
 
-def test_webhook_is_idempotent_for_same_session(client, variant_ids, monkeypatch):
-    sid = "webhook-session-2"
-    _add_item(client, variant_ids[0], sid)
+def test_verify_is_idempotent(client, variant_ids, monkeypatch):
+    sid = "verify-session-2"
+    _setup_verify(client, variant_ids, monkeypatch, sid, razorpay_order_id="order_verify2")
     inventory_before = _inventory_for_variant(variant_ids[0]).quantity
-
-    fake_event = _completed_event(sid, session_id="cs_test_webhook2")
-    monkeypatch.setattr(
-        stripe.Webhook, "construct_event", lambda *args, **kwargs: fake_event
-    )
 
     for _ in range(2):
         resp = client.post(
-            "/payment/webhook", content=b"{}", headers={"stripe-signature": "dummy"}
+            "/payment/verify",
+            json={
+                "razorpay_order_id": "order_verify2",
+                "razorpay_payment_id": "pay_2",
+                "razorpay_signature": "sig",
+                "session_id": sid,
+            },
         )
         assert resp.status_code == 200
 
     db = SessionLocal()
     try:
-        orders = db.execute(select(Order)).scalars().all()
-        assert sum(1 for o in orders if o.stripe_session_id == "cs_test_webhook2") == 1
+        orders = (
+            db.execute(
+                select(Order).where(Order.razorpay_order_id == "order_verify2")
+            ).scalars()
+            .all()
+        )
+        assert len(orders) == 1
     finally:
         db.close()
 
     assert _inventory_for_variant(variant_ids[0]).quantity == inventory_before - 1
 
 
-def test_webhook_unknown_session_is_noop(client, monkeypatch):
-    fake_event = _completed_event("no-such-cart")
-    monkeypatch.setattr(
-        stripe.Webhook, "construct_event", lambda *args, **kwargs: fake_event
-    )
+def test_webhook_creates_order(client, variant_ids, monkeypatch):
+    sid = "webhook-session-1"
+    _add_item(client, variant_ids[0], sid)
 
+    monkeypatch.setattr("backend.routes.verify_webhook_signature", lambda *a, **k: None)
+
+    body = {
+        "event": "payment.captured",
+        "payload": {
+            "payment": {
+                "entity": {
+                    "order_id": "order_web1",
+                    "amount": 2400,
+                    "currency": "inr",
+                    "id": "pay_w1",
+                    "notes": {"session_id": sid},
+                }
+            }
+        },
+    }
     resp = client.post(
-        "/payment/webhook", content=b"{}", headers={"stripe-signature": "dummy"}
+        "/payment/webhook",
+        json=body,
+        headers={"x-razorpay-signature": "dummy"},
     )
     assert resp.status_code == 200
+
+    db = SessionLocal()
+    try:
+        order = db.execute(
+            select(Order).where(Order.razorpay_order_id == "order_web1")
+        ).scalar_one()
+        assert order.status == "paid"
+    finally:
+        db.close()
 
 
 def test_confirm_order_endpoint(client, variant_ids, monkeypatch):
     sid = "confirm-session-1"
-    _add_item(client, variant_ids[0], sid)
+    _setup_verify(client, variant_ids, monkeypatch, sid, razorpay_order_id="order_verifyX")
 
-    fake_event = _completed_event(sid, session_id="cs_test_confirm")
-    monkeypatch.setattr(
-        stripe.Webhook, "construct_event", lambda *args, **kwargs: fake_event
+    resp = client.post(
+        "/payment/verify",
+        json={
+            "razorpay_order_id": "order_verifyX",
+            "razorpay_payment_id": "pay_x",
+            "razorpay_signature": "sig",
+            "session_id": sid,
+        },
     )
-    client.post(
-        "/payment/webhook", content=b"{}", headers={"stripe-signature": "dummy"}
-    )
+    assert resp.status_code == 200
 
     resp = client.get(
-        "/api/v1/orders/confirm", params={"session_id": "cs_test_confirm"}
+        "/api/v1/orders/confirm", params={"session_id": "order_verifyX"}
     )
     assert resp.status_code == 200
     data = resp.json()

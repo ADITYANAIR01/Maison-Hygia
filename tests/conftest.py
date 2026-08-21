@@ -17,8 +17,8 @@ if _TEST_DATABASE_URL:
 else:
     _TMP_DIR = Path(tempfile.mkdtemp(prefix="mh_tests_"))
     os.environ["DATABASE_URL"] = f"sqlite:///{_TMP_DIR / 'test.db'}"
-os.environ["STRIPE_SECRET_KEY"] = "sk_test_test"
-os.environ["STRIPE_WEBHOOK_SECRET"] = "whsec_test"
+os.environ["RAZORPAY_API_KEY"] = "rzp_test_test"
+os.environ["RAZORPAY_API_SECRET"] = "razorpay_secret_test"
 os.environ["FRONTEND_URL"] = "http://localhost:8000"
 os.environ["ALLOWED_ORIGINS"] = "http://localhost:8000,http://localhost:8001"
 

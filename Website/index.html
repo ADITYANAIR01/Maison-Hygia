@@ -14,104 +14,7 @@
       href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;0,500;1,300;1,400;1,500&family=Inter:wght@300;400;500;600&display=swap"
       rel="stylesheet"
     />
-    <!-- Supabase shim: the legacy bundle still initializes a Supabase client.
-         The AWS-migrated backend has no Supabase, so intercept all requests to
-         the old project domain and return benign, Supabase-shaped responses. -->
-    <script>
-      (function () {
-        var SUPABASE_HOST = 'cowggxamybvlpkgoyfve.supabase.co';
-
-        function isSupabase(url) {
-          try {
-            return new URL(url, window.location.href).hostname === SUPABASE_HOST;
-          } catch (e) {
-            return false;
-          }
-        }
-
-        function fakeJson(payload, status) {
-          return new Response(JSON.stringify(payload), {
-            status: status || 200,
-            headers: { 'Content-Type': 'application/json' },
-          });
-        }
-
-        function handleSupabaseFetch(url, options) {
-          var method = (options && options.method) || 'GET';
-          var path = new URL(url, window.location.href).pathname;
-
-          if (method === 'POST') {
-            if (path.indexOf('/auth/v1/') === 0) {
-              return Promise.resolve(
-                fakeJson({
-                  access_token: '',
-                  token_type: 'bearer',
-                  expires_in: 3600,
-                  refresh_token: '',
-                  user: null,
-                })
-              );
-            }
-            if (path.indexOf('/rest/v1/rpc/') === 0) {
-              // has_paid_order -> false (anonymous cart checkout)
-              return Promise.resolve(fakeJson(false));
-            }
-            if (path.indexOf('/rest/v1/') === 0) {
-              return Promise.resolve(fakeJson([]));
-            }
-          }
-          if (path.indexOf('/auth/v1/user') === 0) {
-            return Promise.resolve(fakeJson({}));
-          }
-          return Promise.resolve(fakeJson({}));
-        }
-
-        var origFetch = window.fetch;
-        window.fetch = function (input, init) {
-          var url =
-            typeof input === 'string'
-              ? input
-              : input && input.url
-                ? input.url
-                : '';
-          if (isSupabase(url)) {
-            return handleSupabaseFetch(url, init || {});
-          }
-          return origFetch.apply(this, arguments);
-        };
-
-        if (window.XMLHttpRequest) {
-          var origOpen = XMLHttpRequest.prototype.open;
-          var origSend = XMLHttpRequest.prototype.send;
-          XMLHttpRequest.prototype.open = function (method, url) {
-            this.__mhSupabase = isSupabase(url);
-            return origOpen.apply(this, arguments);
-          };
-          XMLHttpRequest.prototype.send = function () {
-            if (this.__mhSupabase) {
-              var self = this;
-              setTimeout(function () {
-                try {
-                  Object.defineProperty(self, 'status', {
-                    get: function () {
-                      return 200;
-                    },
-                    configurable: true,
-                  });
-                  self.responseText = '{}';
-                  self.response = '{}';
-                  self.readyState = 4;
-                  if (self.onreadystatechange) self.onreadystatechange();
-                  if (self.onload) self.onload();
-                } catch (e) {}
-              }, 0);
-              return;
-            }
-            return origSend.apply(this, arguments);
-          };
-        }
-      })();
-    </script>
+    <script src="https://checkout.razorpay.com/v1/checkout.js"></script>
     <script type="module" crossorigin src="assets/index-DLFkKnAo.js"></script>
           <style>
 /*! tailwindcss v4.3.3 | MIT License | https://tailwindcss.com */
@@ -1330,19 +1233,60 @@
         cartCheckoutBtn.disabled = true;
         cartMsgEl.classList.add('hidden');
         try {
-          const res = await fetch('/payment/create-checkout-session', {
+          const res = await fetch('/payment/create-order', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ session_id: getBagSessionId() }),
           });
           if (!res.ok) throw new Error('Checkout unavailable');
           const data = await res.json();
-          if (!data || !data.checkout_url) throw new Error('Checkout unavailable');
-          window.location.href = data.checkout_url;
+          if (!data || !data.order_id) throw new Error('Checkout unavailable');
+
+          if (typeof Razorpay === 'undefined') {
+            throw new Error('Razorpay not loaded');
+          }
+
+          const options = {
+            key: data.razorpay_key_id,
+            amount: data.amount,
+            currency: data.currency,
+            name: 'Maison Hygia',
+            description: 'Your wellness ritual',
+            order_id: data.order_id,
+            handler: async function (response) {
+              try {
+                const verifyRes = await fetch('/payment/verify', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    razorpay_order_id: response.razorpay_order_id,
+                    razorpay_payment_id: response.razorpay_payment_id,
+                    razorpay_signature: response.razorpay_signature,
+                    session_id: getBagSessionId(),
+                    email: response.email || null,
+                    name: null,
+                  }),
+                });
+                if (!verifyRes.ok) throw new Error('Verification failed');
+                window.location.href =
+                  '/checkout/success?session_id=' + encodeURIComponent(data.order_id);
+              } catch (err) {
+                window.location.href = '/checkout/cancel';
+              }
+            },
+            modal: {
+              ondismiss: function () {
+                cartCheckoutBtn.disabled = false;
+              },
+            },
+            theme: { color: '#1f3d2b' },
+          };
+          const rzp = new Razorpay(options);
+          rzp.open();
         } catch (error) {
           console.error('Checkout error:', error);
           cartCheckoutBtn.disabled = false;
-          cartMsgEl.textContent = 'Checkout unavailable — Stripe keys not configured.';
+          cartMsgEl.textContent = 'Checkout unavailable — Razorpay keys not configured.';
           cartMsgEl.classList.remove('hidden');
         }
       };

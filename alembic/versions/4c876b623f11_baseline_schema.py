@@ -74,7 +74,8 @@ def upgrade() -> None:
         sa.Column("currency", sa.String(), nullable=False),
         sa.Column("status", sa.String(), nullable=False),
         sa.Column("payment_status", sa.String(), nullable=False),
-        sa.Column("stripe_session_id", sa.String(), nullable=False),
+        sa.Column("razorpay_order_id", sa.String(), nullable=False),
+        sa.Column("razorpay_payment_id", sa.String(), nullable=True),
         sa.Column("created_at", sa.DateTime(), nullable=False),
         sa.Column("updated_at", sa.DateTime(), nullable=False),
         sa.ForeignKeyConstraint(
@@ -91,9 +92,9 @@ def upgrade() -> None:
         op.f("ix_orders_session_id"), "orders", ["session_id"], unique=False
     )
     op.create_index(
-        op.f("ix_orders_stripe_session_id"),
+        op.f("ix_orders_razorpay_order_id"),
         "orders",
-        ["stripe_session_id"],
+        ["razorpay_order_id"],
         unique=True,
     )
     op.create_table(
@@ -221,7 +222,7 @@ def downgrade() -> None:
     op.drop_table("product_tags")
     op.drop_index(op.f("ix_product_images_id"), table_name="product_images")
     op.drop_table("product_images")
-    op.drop_index(op.f("ix_orders_stripe_session_id"), table_name="orders")
+    op.drop_index(op.f("ix_orders_razorpay_order_id"), table_name="orders")
     op.drop_index(op.f("ix_orders_session_id"), table_name="orders")
     op.drop_index(op.f("ix_orders_id"), table_name="orders")
     op.drop_index(op.f("ix_orders_customer_email"), table_name="orders")

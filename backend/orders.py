@@ -3,29 +3,34 @@
 from datetime import datetime, timezone
 from decimal import Decimal
 
-import stripe
 from fastapi import HTTPException
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from . import models
+from .config import settings
+from .payments import refund_payment
 
 
 def create_order_from_cart(
-    db: Session, cart: models.Cart, session: dict
+    db: Session,
+    cart: models.Cart,
+    razorpay_order: dict,
+    payment_id: str | None = None,
+    customer: dict | None = None,
 ) -> models.Order:
-    """Create an Order from a paid cart (idempotent on stripe_session_id).
+    """Create an Order from a paid cart (idempotent on razorpay_order_id).
 
     Copies line items with price snapshots, decrements inventory, and marks the
-    cart as paid. Returns the existing Order if the Stripe session was already
+    cart as paid. Returns the existing Order if the Razorpay order was already
     fulfilled.
     """
-    stripe_session_id = session.get("id")
-    if not stripe_session_id:
-        stripe_session_id = (session.get("metadata") or {}).get("session_id")
+    razorpay_order_id = razorpay_order.get("id")
+    if not razorpay_order_id:
+        raise HTTPException(status_code=400, detail="Missing Razorpay order id")
 
     existing = db.execute(
-        select(models.Order).where(models.Order.stripe_session_id == stripe_session_id)
+        select(models.Order).where(models.Order.razorpay_order_id == razorpay_order_id)
     ).scalar_one_or_none()
     if existing:
         return existing
@@ -33,21 +38,27 @@ def create_order_from_cart(
     if cart.status == "paid":
         raise HTTPException(status_code=409, detail="Cart already fulfilled")
 
-    customer_details = session.get("customer_details") or {}
-    shipping = session.get("shipping_details") or {}
-    total = Decimal(str(session.get("amount_total", 0))) / Decimal(100)
+    notes = (
+        (razorpay_order.get("notes") or {}) if isinstance(razorpay_order, dict) else {}
+    )
+    customer = customer or {}
+    customer_email = customer.get("email") or notes.get("email")
+    customer_name = customer.get("name") or notes.get("name")
+
+    total = Decimal(str(razorpay_order.get("amount", 0))) / Decimal(100)
+    currency = (razorpay_order.get("currency") or settings.PAYMENT_CURRENCY).lower()
 
     order = models.Order(
         cart_id=cart.id,
         session_id=cart.session_id,
-        customer_email=customer_details.get("email"),
-        customer_name=customer_details.get("name"),
-        shipping_address=shipping.get("address"),
+        customer_email=customer_email,
+        customer_name=customer_name,
         total=total,
-        currency=session.get("currency") or "usd",
+        currency=currency,
         status="paid",
         payment_status="paid",
-        stripe_session_id=stripe_session_id,
+        razorpay_order_id=razorpay_order_id,
+        razorpay_payment_id=payment_id,
     )
     db.add(order)
     db.flush()
@@ -84,18 +95,13 @@ def create_order_from_cart(
 
 
 def refund_order(db: Session, order: models.Order) -> models.Order:
-    """Refund an order via the Stripe Refunds API and update its status."""
-    if not order.stripe_session_id:
-        raise HTTPException(status_code=400, detail="Order has no Stripe session")
-
-    session = stripe.checkout.Session.retrieve(order.stripe_session_id)
-    payment_intent = getattr(session, "payment_intent", None)
-    if not payment_intent:
+    """Refund an order via the Razorpay Refund API and update its status."""
+    if not order.razorpay_payment_id:
         raise HTTPException(
-            status_code=400, detail="Order has no Stripe payment intent to refund"
+            status_code=400, detail="Order has no Razorpay payment to refund"
         )
 
-    stripe.Refund.create(payment_intent=payment_intent)
+    refund_payment(order.razorpay_payment_id)
 
     order.status = "refunded"
     order.payment_status = "refunded"

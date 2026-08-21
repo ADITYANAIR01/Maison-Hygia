@@ -202,7 +202,8 @@ class Order(Base):
         String, nullable=False, default="pending"
     )  # pending|paid|fulfilled|cancelled|refunded
     payment_status = Column(String, nullable=False, default="unpaid")
-    stripe_session_id = Column(String, unique=True, index=True, nullable=False)
+    razorpay_order_id = Column(String, unique=True, index=True, nullable=False)
+    razorpay_payment_id = Column(String, index=True, nullable=True)
     created_at = Column(
         DateTime, default=lambda: datetime.now(timezone.utc), nullable=False
     )

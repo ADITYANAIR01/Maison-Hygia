@@ -20,8 +20,9 @@ class Settings(BaseSettings):
         "http://localhost:8001",
     ]
 
-    STRIPE_SECRET_KEY: str | None = None
-    STRIPE_WEBHOOK_SECRET: str | None = None
+    RAZORPAY_API_KEY: str | None = None
+    RAZORPAY_API_SECRET: str | None = None
+    PAYMENT_CURRENCY: str = "inr"
 
     COGNITO_USER_POOL_ID: str | None = None
     COGNITO_APP_CLIENT_ID: str | None = None
